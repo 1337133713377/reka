@@ -64,6 +64,17 @@ if(REKA_TEST_PLUGIN)
     if(NOT MSVC)
         target_link_options(reka-test-gain PRIVATE -static -static-libgcc -static-libstdc++)
     endif()
+    # Plugin VST3 de test (gain), un seul fichier reka-test-gain3.vst3
+    add_library(reka-test-gain3 SHARED test/gain_vst3.cpp src/vst3_iids.cpp
+        ${PLUGINTERFACES}/base/funknown.cpp ${PLUGINTERFACES}/base/ustring.cpp
+        ${PLUGINTERFACES}/base/conststringtable.cpp)
+    set_target_properties(reka-test-gain3 PROPERTIES PREFIX "" SUFFIX ".vst3")
+    target_include_directories(reka-test-gain3 PRIVATE ${CMAKE_BINARY_DIR}/vst3)
+    target_compile_definitions(reka-test-gain3 PRIVATE _CRT_SECURE_NO_WARNINGS
+        $<$<CONFIG:Release>:RELEASE=1> $<$<NOT:$<CONFIG:Release>>:DEVELOPMENT=1>)
+    if(NOT MSVC)
+        target_link_options(reka-test-gain3 PRIVATE -static -static-libgcc -static-libstdc++)
+    endif()
 endif()
 
 # Faux Voicemeeter (audio callback simulé), pour tester le traitement du son

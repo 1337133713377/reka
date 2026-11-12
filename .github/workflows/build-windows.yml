@@ -57,7 +57,8 @@ jobs:
       - name: Binaires
         run: |
           mkdir -p ../../engine/fake-voicemeeter
-          cp build/Release/reka-host.exe build/Release/reka-test-gain.dll ../../engine/
+          cp build/Release/reka-host.exe build/Release/reka-test-gain.dll \
+             build/Release/reka-test-gain3.vst3 ../../engine/
           cp build/fake-voicemeeter/Release/VoicemeeterRemote64.dll ../../engine/fake-voicemeeter/
           ls -la ../../engine ../../engine/fake-voicemeeter
       - uses: actions/upload-artifact@v4

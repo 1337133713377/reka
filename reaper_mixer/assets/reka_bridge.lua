@@ -9,6 +9,8 @@
     commands.txt  écrit par l'app   : commandes numérotées
     state.txt     écrit par le pont : projet, pistes, effets, carte son, accusés (~5 fois/s)
     fxlist.txt    écrit par le pont : plugins installés, sur demande
+    fxexport.txt  écrit par le pont : effets des pistes et leurs réglages, sur
+                  demande (passage au moteur intégré de REKA)
   Une ligne par enregistrement, champs séparés par des tabulations,
   « \ », tabulation et retour à la ligne échappés en \\, \t, \n.
   Chaque fichier se termine par « END <n> » : un fichier lu pendant son
@@ -27,6 +29,7 @@ DIR = DIR:gsub("\\", "/"):gsub("/+$", "")
 local CMD_PATH = DIR .. "/commands.txt"
 local STATE_PATH = DIR .. "/state.txt"
 local FXLIST_PATH = DIR .. "/fxlist.txt"
+local FXEXPORT_PATH = DIR .. "/fxexport.txt"
 
 local STATE_PERIOD = 0.2     -- s : écriture de l'état, sert aussi de battement de cœur
 local AUTOSAVE_PERIOD = 30   -- s : sauvegarde du projet s'il a été modifié
@@ -151,6 +154,44 @@ local function write_fxlist(request)
   write_file(FXLIST_PATH, table.concat(lines, "\n") .. "\n")
 end
 
+-- Effets de chaque piste qui écoute une entrée, avec tout ce qu'il faut pour
+-- les recharger ailleurs : fichier du plugin, « chunk » de réglages (VST2) et
+-- valeur normalisée de chaque paramètre, avec son nom.
+local function named(tr, fx, key)
+  if not reaper.TrackFX_GetNamedConfigParm then return "" end
+  local ok, value = reaper.TrackFX_GetNamedConfigParm(tr, fx, key)
+  return ok and value or ""
+end
+
+local function write_fxexport(request)
+  local lines = { "FXEXPORT " .. request }
+  local seen = {}
+  for t = 0, reaper.CountTracks(0) - 1 do
+    local tr = reaper.GetTrack(0, t)
+    local channel = input_channel(tr)
+    if channel and not seen[channel] then  -- même règle que find_track
+      seen[channel] = true
+      local chain_on = reaper.GetMediaTrackInfo_Value(tr, "I_FXEN") ~= 0
+      lines[#lines + 1] = "TRACK\t" .. channel .. "\t" .. (chain_on and "1" or "0")
+      for fx = 0, reaper.TrackFX_GetCount(tr) - 1 do
+        local _, name = reaper.TrackFX_GetFXName(tr, fx, "")
+        local params = {}
+        for p = 0, reaper.TrackFX_GetNumParams(tr, fx) - 1 do
+          local _, pname = reaper.TrackFX_GetParamName(tr, fx, p, "")
+          local value = reaper.TrackFX_GetParamNormalized(tr, fx, p)
+          params[#params + 1] = escape(pname):gsub("[=;]", "_") .. "=" .. string.format("%.9g", value)
+        end
+        lines[#lines + 1] = table.concat({
+          "FX", channel, fx, escape(named(tr, fx, "fx_type")), escape(named(tr, fx, "fx_ident")),
+          escape(name), reaper.TrackFX_GetEnabled(tr, fx) and "1" or "0",
+          escape(named(tr, fx, "vst_chunk")), table.concat(params, ";") }, "\t")
+      end
+    end
+  end
+  lines[#lines + 1] = "END " .. request
+  write_file(FXEXPORT_PATH, table.concat(lines, "\n") .. "\n")
+end
+
 -- -------------------------------------------------------------- commandes
 local HANDLERS = {
   -- Donne le nom de la strip à sa piste si celle-ci n'a pas encore de nom
@@ -221,6 +262,7 @@ local HANDLERS = {
   end,
   save = function() save_project() end,
   list_fx = function(a) write_fxlist(a[1]) end,
+  export_fx = function(a) write_fxexport(a[1]) end,
   action = function(a) reaper.Main_OnCommand(tonumber(a[1]), 0) end,
 }
 

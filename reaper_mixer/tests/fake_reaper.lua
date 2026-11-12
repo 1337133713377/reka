@@ -15,6 +15,16 @@ local installed = {
   { "VST: ReaLimit (Cockos)", "realimit.dll" },
   { "JS: Volume Adjustment", "utility/volume" },
 }
+-- Ce que REAPER dit de chaque plugin pour l'export vers le moteur de REKA
+local details = {
+  ["VST3: Pro-Q 4 (FabFilter)"] = { type = "VST3", chunk = "",
+    ident = "C:\\Program Files\\Common Files\\VST3\\FabFilter Pro-Q 4.vst3",
+    params = { { "Band 1 Gain", 0.75 }, { "Output; Level=dB", 0.5 } } },
+  ["VST: ReaLimit (Cockos)"] = { type = "VST", ident = "realimit.dll<1919708532",
+    chunk = "AAEC", params = { { "Threshold", 0.25 } } },
+  ["JS: Volume Adjustment"] = { type = "JS", ident = "utility/volume", chunk = "",
+    params = { { "Volume", 0.5 } } },
+}
 
 local function new_track(rec_input, hw_dst)
   local tr = { name = "", fx = {}, sends = {},
@@ -89,8 +99,15 @@ local device = { MODE = "ASIO", IDENT_IN = "Voicemeeter Potato Insert Virtual AS
 function reaper.GetAudioDeviceInfo(key) return true, device[key] end
 function reaper.TrackFX_GetNamedConfigParm(tr, i, key)
   if key == "pdc" then return true, tostring(tr.fx[i + 1].pdc or 0) end
+  local d = details[tr.fx[i + 1].name]
+  if key == "fx_type" then return true, d.type end
+  if key == "fx_ident" then return true, d.ident end
+  if key == "vst_chunk" and d.chunk ~= "" then return true, d.chunk end
   return false, ""
 end
+function reaper.TrackFX_GetNumParams(tr, i) return #details[tr.fx[i + 1].name].params end
+function reaper.TrackFX_GetParamName(tr, i, p) return true, details[tr.fx[i + 1].name].params[p + 1][1] end
+function reaper.TrackFX_GetParamNormalized(tr, i, p) return details[tr.fx[i + 1].name].params[p + 1][2] end
 function reaper.GetInputOutputLatency() return 256, 288 end
 function reaper.EnumInstalledFX(i)
   local p = installed[i + 1]

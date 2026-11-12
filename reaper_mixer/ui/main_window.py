@@ -589,6 +589,7 @@ class MainWindow(QMainWindow):
             target = target.with_name(target.name + backup.EXTENSION)
         self._store_state()
         host, project, chains, wait = self._reaper, None, None, 0
+        embed = bool(self._cfg.get("reka_host", {}).get("embed_plugins", True))
         if host.kind == HOST_REAPER and host.project_path:
             project = Path(host.project_path)
             if self._reaper_ok:
@@ -604,8 +605,9 @@ class MainWindow(QMainWindow):
             try:
                 if chains is not None and not chains.is_file():
                     host.write_chains()
+                plugins = backup.plugin_files(chains) if chains is not None and embed else []
                 saved = backup.export_backup(running_config(self._cfg, self._vm), target, project,
-                                             chains=chains)
+                                             chains=chains, plugins=plugins)
             except backup.BackupError as exc:
                 ok, message = False, str(exc)
             else:
@@ -616,6 +618,73 @@ class MainWindow(QMainWindow):
                 self.toast.show_message(message)
 
         QTimer.singleShot(wait, self, write)
+
+    # --------------------------------------- passage de REAPER au moteur intégré
+    def migrate_to_reka(self, done, confirm=None) -> None:
+        """Reprend les effets de REAPER (plugins et réglages) dans le moteur
+        intégré, puis passe REKA sur ce moteur. `done(ok, message, restart)` à
+        la fin ; `confirm(texte) -> bool` demande l'accord (QMessageBox sinon)."""
+        host = self._reaper
+        if host.kind != HOST_REAPER or not hasattr(host, "request_fx_export"):
+            done(False, "REKA n'utilise pas REAPER.", False)
+            return
+        if not self._reaper_ok:
+            done(False, "REAPER ne répond pas : impossible de lire tes effets.", False)
+            return
+
+        def received(export) -> None:
+            try:
+                host.fx_export_ready.disconnect(received)
+            except (RuntimeError, TypeError):
+                pass
+            if export is None:
+                done(False, "REAPER n'a pas envoyé ses effets : réessaie dans un instant.", False)
+                return
+            self._finish_migration(export, done, confirm)
+
+        host.fx_export_ready.connect(received)
+        host.request_fx_export()
+
+    def _finish_migration(self, export, done, confirm) -> None:
+        from core import reka_host
+        from core.reka_migration import build_chains, reaper_plugin_dirs
+        from core.voicemeeter_ctrl import strip_channels
+
+        exe = self._processes.executable("reaper") if self._processes is not None else None
+        resource = self._reaper.resource_path(exe) if exe is not None else None
+        extra = self._cfg.get("vst", {}).get("extra_dirs", [])
+        dirs = reaper_plugin_dirs(exe, resource)
+        plugins = reka_host.scan_plugins(extra + [str(d) for d in dirs])
+        migration = build_chains(export, strip_channels(self._cfg), plugins, dirs)
+        if migration.count == 0:
+            done(False, "Aucun plugin VST2 / VST3 à reprendre sur tes strips.\n"
+                 + migration.summary(), False)
+            return
+        text = (migration.summary() + "\n\nREKA va utiliser son moteur intégré à la place de "
+                "REAPER, puis redémarrer. Tu pourras revenir à REAPER dans ⚙ → Général : ton "
+                "projet REAPER n'est pas modifié.\n\nContinuer ?")
+        if confirm is None:
+            def confirm(message: str) -> bool:
+                return QMessageBox.question(self, "Passer au moteur REKA", message) == \
+                    QMessageBox.StandardButton.Yes
+        if not confirm(text):
+            done(True, "", False)
+            return
+        if not self._persist:
+            done(False, "Mode démo : rien n'est enregistré.", False)
+            return
+        target = reka_host.chains_path()
+        try:
+            if target.is_file():
+                target.replace(target.with_name("chains-avant-reaper.json"))
+            reka_host.save_chains_file(target, reka_host.clean_chains(migration.chains))
+        except OSError as exc:
+            done(False, f"Chaînes d'effets non enregistrées : {exc}", False)
+            return
+        self._cfg.setdefault("effects", {})["host"] = HOST_REKA
+        self._save_config()
+        log.info("Passage au moteur REKA : %s", migration.summary().replace("\n", " "))
+        done(True, migration.summary(), True)
 
     def import_config(self, data: backup.Backup) -> tuple[bool, str]:
         """Remplace la config par celle d'une sauvegarde (déjà lue et confirmée).
@@ -914,6 +983,16 @@ class MainWindow(QMainWindow):
                 self.toast.show_message(message)
 
         dialog.exportRequested.connect(lambda path: self.export_config(path, export_done))
+
+        def migrate_done(ok: bool, message: str, restart_now: bool) -> None:
+            if isValid(dialog):
+                dialog.show_migrate_status(ok, message)
+                if restart_now:
+                    dialog.restartRequested.emit()
+            elif message:
+                self.toast.show_message(message)
+
+        dialog.migrateRequested.connect(lambda: self.migrate_to_reka(migrate_done))
 
         def import_now(data) -> None:
             ok, message = self.import_config(data)

@@ -110,6 +110,17 @@ indique s'il est installé sur le PC et le délai qu'il ajoute à la voix. On le
   `%APPDATA%\REKA\chains.json` et partent dans les `.reka`. Si un plugin plante, REKA
   relance le moteur avec les dernières chaînes ; après plusieurs plantages rapprochés, il
   s'arrête et le signale (retire le plugin fautif). Journal : `reka-host.log`.
+  - **Depuis REAPER, sans rien refaire** : ⚙ → Général → *Passer au moteur REKA en gardant
+    mes effets…* (REKA doit tourner avec REAPER). REAPER donne pour chaque effet son fichier,
+    son « chunk » de réglages (VST2) et la valeur de chaque paramètre ; le moteur REKA les
+    rend au plugin à son premier chargement, puis garde ses réglages dans son format. Les
+    effets JS et CLAP sont signalés et ne suivent pas ; un plugin introuvable garde ses
+    réglages en attendant d'être installé. Le projet REAPER n'est pas modifié.
+  - **Plugins dans le `.reka`** : case *Inclure les fichiers des plugins* (cochée par
+    défaut). Les `.dll` et dossiers `.vst3` des chaînes partent dans l'archive
+    (`plugins/<n>/…`, 8 Go au plus). À l'import, ils sont extraits dans
+    `%APPDATA%\REKA\plugins`, seulement pour les plugins absents du PC, et jamais hors de
+    ce dossier. Les plugins payants restent liés à leur licence (iLok, compte…).
 - **FL Studio** : REKA le lance (masqué) sur le projet choisi dans ⚙ → Général et le ferme
   en partant. Dans FL Studio, choisis *Voicemeeter Insert Virtual ASIO* (Options → Audio
   settings), puis une piste du mixer par strip, entrée et sortie sur les canaux d'insert de
@@ -410,10 +421,10 @@ cmake --build build --config Release
 copy build\Release\reka-host.exe ..\..\engine\
 ```
 
-Les tests `tests/test_reka_host_native.py` pilotent le vrai `reka-host.exe` avec un vrai
-plugin VST2 (`reka-test-gain.dll`) et un faux Voicemeeter qui envoie un signal connu : ils
+Les tests `tests/test_reka_host_native.py` pilotent le vrai `reka-host.exe` avec de vrais
+plugins VST2 (`reka-test-gain.dll`) et VST3 (`reka-test-gain3.vst3`) et un faux Voicemeeter qui envoie un signal connu : ils
 tournent sous Windows, ou sous Linux avec Wine (variables `REKA_HOST_EXE`,
-`REKA_TEST_PLUGIN`, `REKA_FAKE_VOICEMEETER`). `python main.py --demo --host reka` montre la
+`REKA_TEST_PLUGIN`, `REKA_TEST_PLUGIN3`, `REKA_FAKE_VOICEMEETER`). `python main.py --demo --host reka` montre la
 console avec un moteur intégré simulé.
 
 Avec le Python du Microsoft Store, `pip` peut échouer sur des chemins trop longs : active

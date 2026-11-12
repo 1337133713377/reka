@@ -70,6 +70,7 @@ struct Slot {
     std::unique_ptr<Plugin> plugin;  // nullptr : plugin introuvable sur ce PC
     bool enabled = true;
     std::string savedState;          // réglages (base64) d'un plugin introuvable
+    json imported;                   // réglages repris de REAPER (chunk, params), en attente
     HWND window = nullptr;
 };
 
@@ -343,6 +344,10 @@ std::unique_ptr<Slot> Host::makeSlot(const json& fx, std::string& error, bool ke
     if (slot->desc.name.empty()) slot->desc.name = fileStem(slot->desc.path);
     slot->enabled = fx.value("enabled", true);
     slot->savedState = fx.value("state", "");
+    if (slot->savedState.empty()) {
+        if (fx.contains("chunk")) slot->imported["chunk"] = fx["chunk"];
+        if (fx.contains("params")) slot->imported["params"] = fx["params"];
+    }
     logLine("chargement : " + slot->desc.path);
     slot->plugin = loadPlugin(slot->desc, error);
     if (!slot->plugin) {
@@ -358,6 +363,23 @@ std::unique_ptr<Slot> Host::makeSlot(const json& fx, std::string& error, bool ke
         if (base64Decode(slot->savedState, state) && !slot->plugin->setState(state))
             logLine("réglages refusés par " + slot->desc.name);
         slot->savedState.clear();
+    } else if (!slot->imported.is_null()) {
+        // Réglages repris de REAPER : le chunk du plugin, sinon ses paramètres
+        std::vector<uint8_t> chunk;
+        bool applied = false;
+        if (slot->imported.contains("chunk") && slot->imported["chunk"].is_string() &&
+            base64Decode(slot->imported["chunk"].get<std::string>(), chunk) && !chunk.empty())
+            applied = slot->plugin->setChunk(chunk);
+        if (!applied && slot->imported.contains("params") && slot->imported["params"].is_array()) {
+            std::vector<std::pair<std::string, double>> params;
+            for (const json& p : slot->imported["params"])
+                if (p.is_array() && p.size() == 2 && p[1].is_number())
+                    params.emplace_back(p[0].is_string() ? p[0].get<std::string>() : "",
+                                        p[1].get<double>());
+            slot->plugin->setParams(params);
+        }
+        logLine("réglages repris de REAPER : " + slot->desc.name);
+        slot->imported = json();
     }
     prepare(slot->plugin.get());
     return slot;
@@ -458,6 +480,8 @@ void Host::cmdMove(const json& command) {
             if (fx->plugin->getState(state)) description["state"] = base64Encode(state);
         } else {
             description["state"] = fx->savedState;
+            if (fx->imported.is_object())
+                for (auto& [key, value] : fx->imported.items()) description[key] = value;
         }
         std::string error;
         auto copy = makeSlot(description, error, true);
@@ -487,10 +511,14 @@ json Host::chains() {
                 std::vector<uint8_t> bytes;
                 if (slot->plugin->getState(bytes)) state = base64Encode(bytes);
             }
-            fx.push_back({{"format", slot->desc.format}, {"path", slot->desc.path},
+            json entry = {{"format", slot->desc.format}, {"path", slot->desc.path},
                           {"uid", slot->desc.uid}, {"name", slot->desc.name},
                           {"vendor", slot->desc.vendor}, {"enabled", slot->enabled},
-                          {"state", state}});
+                          {"state", state}};
+            // Plugin introuvable : ses réglages repris de REAPER attendent toujours
+            if (state.empty() && slot->imported.is_object())
+                for (auto& [key, value] : slot->imported.items()) entry[key] = value;
+            fx.push_back(entry);
         }
         strips.push_back({{"enabled", s.enabled}, {"fx", fx}});
     }

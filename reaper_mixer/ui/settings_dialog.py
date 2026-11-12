@@ -32,7 +32,7 @@ from PySide6.QtWidgets import (QAbstractButton, QButtonGroup, QCheckBox, QColorD
 
 from core import backup, config, discord_rpc
 from core.process_manager import is_blank_project
-from core.effects import HOST_APO, HOST_FLSTUDIO, HOST_REAPER, HOSTS, host_kind
+from core.effects import HOST_APO, HOST_FLSTUDIO, HOST_REAPER, HOST_REKA, HOSTS, host_kind
 from core.voicemeeter_ctrl import EDITIONS, edition, strip_map
 from ui import styles
 from ui.project_dialog import default_project
@@ -195,6 +195,7 @@ class SettingsDialog(QDialog):
     discordChanged = Signal()        # réglages Discord modifiés
     exportRequested = Signal(str)    # « Exporter… » : fichier .reka à écrire
     importRequested = Signal(object) # « Importer… » : sauvegarde lue et confirmée (Backup)
+    migrateRequested = Signal()      # passer au moteur REKA en gardant les effets de REAPER
 
     BUFFER_CHOICES = ((0, "Ne pas modifier"), (512, "Standard — 512 échantillons"),
                       (256, "Réduit — 256 échantillons"), (128, "Minimal — 128 échantillons (PC puissant)"))
@@ -351,6 +352,19 @@ class SettingsDialog(QDialog):
         self.restart_button.clicked.connect(self._restart)
         restart_row.addWidget(self.restart_button)
         form.addRow(restart_row)
+        if self._running_host == HOST_REAPER:
+            migrate_row = QHBoxLayout()
+            self.migrate_button = QPushButton("Passer au moteur REKA en gardant mes effets…")
+            self.migrate_button.setToolTip(
+                "Reprend les plugins VST2 / VST3 de chaque strip, avec leurs réglages, dans le "
+                "moteur intégré de REKA : REAPER n'est plus nécessaire ensuite.")
+            self.migrate_button.clicked.connect(self._migrate)
+            migrate_row.addWidget(self.migrate_button)
+            migrate_row.addStretch(1)
+            form.addRow(migrate_row)
+            self.migrate_status = _hint("")
+            self.migrate_status.hide()
+            form.addRow(self.migrate_status)
 
         self.vm_path = self._path_row(form, "Voicemeeter", "voicemeeter")
         self.reaper_path = self._path_row(form, "REAPER", "reaper")
@@ -375,6 +389,16 @@ class SettingsDialog(QDialog):
         buttons.addWidget(self.import_button)
         buttons.addStretch(1)
         box.addLayout(buttons)
+        self.embed_plugins = None
+        if self._running_host == HOST_REKA:
+            self.embed_plugins = QCheckBox("Inclure les fichiers des plugins (VST2 / VST3)")
+            self.embed_plugins.setChecked(bool(self._cfg.get("reka_host", {}).get("embed_plugins", True)))
+            self.embed_plugins.setToolTip(
+                "Le .reka emporte les plugins eux-mêmes : tout se réinstalle d'un coup sur un "
+                "autre PC. Fichier plus gros ; les plugins payants restent liés à ta licence.")
+            self.embed_plugins.toggled.connect(
+                lambda on: self._cfg.setdefault("reka_host", {}).__setitem__("embed_plugins", on))
+            box.addWidget(self.embed_plugins)
         self.backup_status = _hint(
             "Un seul fichier .reka avec tout : thème et couleurs, image d'arrière-plan, noms des "
             "canaux, routing, état de la console et projet REAPER (chaînes d'effets). Pour "
@@ -411,11 +435,17 @@ class SettingsDialog(QDialog):
         except backup.BackupError as exc:
             self.show_backup_status(False, str(exc))
             return
+        warning = ""
+        if data.plugins:
+            warning = ("\n\nAttention : ce fichier contient des plugins, c'est-à-dire des "
+                       "programmes. Importe-le seulement s'il vient de toi ou de quelqu'un de "
+                       "confiance. Ils ne servent que pour les plugins absents de ce PC.")
         answer = QMessageBox.question(
             self, "Importer une config",
             f"{data.describe()}\n\nL'import remplace tes réglages actuels (thème, canaux, "
             "routing, état de la console), puis REKA redémarre. Tes réglages d'avant sont "
-            f"gardés dans « {backup.PREVIOUS_NAME} », dans le dossier de REKA.\n\nContinuer ?")
+            f"gardés dans « {backup.PREVIOUS_NAME} », dans le dossier de REKA.{warning}"
+            "\n\nContinuer ?")
         if answer == QMessageBox.StandardButton.Yes:
             self.importRequested.emit(data)
 
@@ -1271,6 +1301,18 @@ class SettingsDialog(QDialog):
         if checked:
             self._cfg.setdefault("voicemeeter", {})["kind"] = button.property("kind")
             self._show_edition()
+
+    def _migrate(self) -> None:
+        self._save()
+        self.migrate_button.setEnabled(False)
+        self.show_migrate_status(True, "Lecture des effets dans REAPER…")
+        self.migrateRequested.emit()
+
+    def show_migrate_status(self, ok: bool, message: str) -> None:
+        self.migrate_button.setEnabled(True)
+        self.migrate_status.setText(message)
+        self.migrate_status.setVisible(bool(message))
+        self._set_tone(self.migrate_status, "hint" if ok else "warning")
 
     def _restart(self) -> None:
         self._save()

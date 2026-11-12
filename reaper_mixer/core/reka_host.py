@@ -188,6 +188,30 @@ def empty_chains(count: int) -> dict:
     return {"format": CHAINS_FORMAT, "strips": [{"enabled": True, "fx": []} for _ in range(count)]}
 
 
+MAX_PARAMS = 4096
+
+
+def _clean_base64(value: Any) -> str:
+    if not isinstance(value, str) or not value or len(value) > MAX_STATE_BYTES * 4 // 3 + 4:
+        return ""
+    try:
+        base64.b64decode(value, validate=True)
+    except (binascii.Error, ValueError):
+        return ""
+    return value
+
+
+def _clean_params(value: Any) -> list:
+    """Paramètres repris de REAPER : [[nom, valeur normalisée 0..1], …]."""
+    params = []
+    if isinstance(value, list):
+        for item in value[:MAX_PARAMS]:
+            if (isinstance(item, (list, tuple)) and len(item) == 2
+                    and isinstance(item[1], (int, float)) and not isinstance(item[1], bool)):
+                params.append([str(item[0])[:128], min(1.0, max(0.0, float(item[1])))])
+    return params
+
+
 def _clean_fx(fx: Any) -> dict | None:
     if not isinstance(fx, dict):
         return None
@@ -195,18 +219,8 @@ def _clean_fx(fx: Any) -> dict | None:
     path = fx.get("path")
     if fmt not in FORMATS or not isinstance(path, str) or not path.strip() or len(path) > 1024:
         return None
-    state = fx.get("state", "")
-    if not isinstance(state, str):
-        state = ""
-    if state:
-        if len(state) > MAX_STATE_BYTES * 4 // 3 + 4:
-            state = ""
-        else:
-            try:
-                base64.b64decode(state, validate=True)
-            except (binascii.Error, ValueError):
-                state = ""
-    return {
+    state = _clean_base64(fx.get("state", ""))
+    clean = {
         "format": fmt,
         "path": path.strip(),
         "uid": str(fx.get("uid", ""))[:128],
@@ -215,6 +229,14 @@ def _clean_fx(fx: Any) -> dict | None:
         "enabled": bool(fx.get("enabled", True)),
         "state": state,
     }
+    # Réglages repris de REAPER, en attendant le premier enregistrement par l'hôte
+    if not state:
+        chunk, params = _clean_base64(fx.get("chunk", "")), _clean_params(fx.get("params"))
+        if chunk:
+            clean["chunk"] = chunk
+        if params:
+            clean["params"] = params
+    return clean
 
 
 def clean_chains(value: Any, count: int | None = None) -> dict:

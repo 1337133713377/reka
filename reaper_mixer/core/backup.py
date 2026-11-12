@@ -10,7 +10,12 @@ Le fichier est une archive zip :
                     réglages des plugins (les plugins eux-mêmes doivent être
                     installés sur le PC qui importe) ;
   - chains.json   : avec le moteur intégré (REKA), les chaînes d'effets de
-                    chaque strip et les réglages de chaque plugin (VST2 / VST3).
+                    chaque strip et les réglages de chaque plugin (VST2 / VST3) ;
+  - plugins/<n>/…  : en option, les fichiers des plugins eux-mêmes (.dll, ou
+                    dossier .vst3 complet) : la sauvegarde se suffit à elle-même.
+                    À l'import, ils vont dans %APPDATA%/REKA/plugins, et ne
+                    servent que si le plugin n'est pas déjà installé sur le PC.
+                    Un plugin est un programme : l'import demande confirmation.
 
 Ce qui est propre au PC n'est pas exporté, et n'est pas touché par un import :
 chemins des moteurs, taille de la fenêtre, mise à jour ignorée, et les secrets
@@ -29,6 +34,7 @@ import json
 import logging
 import os
 import re
+import shutil
 import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -51,6 +57,10 @@ MAX_CONFIG_BYTES = 2 * 1024 * 1024
 MAX_IMAGE_BYTES = 40 * 1024 * 1024
 MAX_PROJECT_BYTES = 64 * 1024 * 1024
 MAX_CHAINS_BYTES = 64 * 1024 * 1024
+PLUGINS_DIR = "plugins"
+MAX_PLUGINS = 64
+MAX_PLUGIN_FILES = 20000               # fichiers d'un dossier .vst3
+MAX_PLUGINS_BYTES = 8 * 1024 ** 3      # tous les plugins, décompressés
 
 # Réglages propres au PC : ni exportés, ni remplacés par un import
 LOCAL_KEYS: tuple[tuple[str, str], ...] = (
@@ -73,6 +83,17 @@ class BackupError(Exception):
 
 
 @dataclass(frozen=True)
+class EmbeddedPlugin:
+    """Plugin joint à une sauvegarde (fichiers dans plugins/<key>/)."""
+
+    key: str                          # numéro dans l'archive
+    path: str                         # chemin d'origine (sur le PC qui a exporté)
+    name: str                         # nom du fichier ou du dossier .vst3
+    size: int = 0                     # octets, décompressés
+    members: tuple[str, ...] = ()     # fichiers de l'archive, vérifiés
+
+
+@dataclass(frozen=True)
 class Backup:
     """Contenu d'un fichier .reka, lu et vérifié."""
 
@@ -85,6 +106,12 @@ class Backup:
     background: tuple[str, bytes] | None = None    # (extension, image)
     project: bytes | None = None
     chains: dict | None = None        # chaînes d'effets du moteur REKA (vérifiées)
+    plugins: tuple[EmbeddedPlugin, ...] = ()   # fichiers de plugins joints
+    source: Path | None = None        # le fichier .reka (pour extraire les plugins)
+
+    @property
+    def plugins_size(self) -> int:
+        return sum(p.size for p in self.plugins)
 
     @property
     def effect_count(self) -> int:
@@ -104,9 +131,19 @@ class Backup:
         extras = [label for label, present in (("image d'arrière-plan", self.background is not None),
                                                ("projet REAPER", self.project is not None),
                                                (f"{count} effet{'s' if count > 1 else ''} REKA",
-                                                count > 0))
+                                                count > 0),
+                                               (f"{len(self.plugins)} plugin"
+                                                f"{'s' if len(self.plugins) > 1 else ''} "
+                                                f"({_size(self.plugins_size)})",
+                                                bool(self.plugins)))
                   if present]
         return text + (f" (avec {' et '.join(extras)})" if extras else "")
+
+
+def _size(size: int) -> str:
+    if size >= 1024 ** 3:
+        return f"{size / 1024 ** 3:.1f} Go"
+    return f"{max(1, round(size / 1024 ** 2))} Mo"
 
 
 @dataclass
@@ -114,6 +151,7 @@ class ImportReport:
     notes: list[str] = field(default_factory=list)   # ce que l'utilisateur doit savoir
     project: str = ""                                # projet REAPER importé (nom du fichier)
     chains: bool = False                             # chaînes d'effets REKA importées
+    plugins: list[str] = field(default_factory=list) # plugins installés depuis la sauvegarde
     previous: Path | None = None                     # sauvegarde de la config d'avant
 
 
@@ -137,11 +175,43 @@ def background_file(cfg: dict) -> Path | None:
     return path
 
 
+def plugin_files(chains: Path | None) -> list[Path]:
+    """Fichiers (ou dossiers .vst3) des plugins des chaînes, présents sur ce PC."""
+    if chains is None or not chains.is_file():
+        return []
+    try:
+        doc = json.loads(chains.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    found: dict[str, Path] = {}
+    for strip in doc.get("strips", []) if isinstance(doc, dict) else []:
+        for fx in strip.get("fx", []) if isinstance(strip, dict) else []:
+            path = Path(str(fx.get("path", ""))) if isinstance(fx, dict) else None
+            if path is not None and path.exists():
+                found.setdefault(os.path.normcase(str(path)), path)
+    return list(found.values())[:MAX_PLUGINS]
+
+
+def _plugin_entries(path: Path) -> list[tuple[Path, str]]:
+    """(fichier, chemin relatif) de tous les fichiers d'un plugin."""
+    if path.is_file():
+        return [(path, path.name)]
+    entries = []
+    for current, _dirs, files in os.walk(path):
+        for name in files:
+            file = Path(current) / name
+            entries.append((file, f"{path.name}/{file.relative_to(path).as_posix()}"))
+            if len(entries) > MAX_PLUGIN_FILES:
+                raise BackupError(f"« {path.name} » contient trop de fichiers pour une sauvegarde.")
+    return entries
+
+
 def export_backup(cfg: dict, target: Path, project: Path | None = None,
-                  chains: Path | None = None) -> Backup:
+                  chains: Path | None = None, plugins: list[Path] | None = None) -> Backup:
     """Écrit la sauvegarde dans `target` (remplacé d'un coup, une fois complet).
     `project` : le projet REAPER à joindre (déjà enregistré), ou None.
-    `chains` : les chaînes d'effets du moteur REKA (chains.json), ou None."""
+    `chains` : les chaînes d'effets du moteur REKA (chains.json), ou None.
+    `plugins` : fichiers ou dossiers .vst3 des plugins à joindre."""
     target = Path(target)
     background = background_file(cfg)
     if project is not None and not (project.is_file() and project.suffix.lower() == ".rpp"
@@ -149,12 +219,22 @@ def export_backup(cfg: dict, target: Path, project: Path | None = None,
         project = None
     if chains is not None and not (chains.is_file() and chains.stat().st_size <= MAX_CHAINS_BYTES):
         chains = None
+    embedded = []
+    total = 0
+    for i, plugin in enumerate((plugins or [])[:MAX_PLUGINS]):
+        entries = _plugin_entries(plugin)
+        total += sum(file.stat().st_size for file, _ in entries)
+        if total > MAX_PLUGINS_BYTES:
+            raise BackupError("Les plugins sont trop volumineux pour une sauvegarde (8 Go au plus).")
+        embedded.append((str(i), plugin, entries))
     manifest = {
         "app": config.APP_NAME, "format": FORMAT, "version": config.APP_VERSION,
         "created": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
         "kind": edition(cfg).kind, "host": host_kind(cfg),
         "background": background.suffix.lower() if background is not None else "",
         "project": project.stem if project is not None else "",
+        "plugins": [{"key": key, "path": str(plugin), "name": plugin.name}
+                    for key, plugin, _ in embedded],
     }
     tmp = target.with_name(target.name + ".tmp")
     try:
@@ -167,6 +247,9 @@ def export_backup(cfg: dict, target: Path, project: Path | None = None,
                 archive.write(project, PROJECT)
             if chains is not None:
                 archive.write(chains, CHAINS)
+            for key, _plugin, entries in embedded:
+                for file, relative in entries:
+                    archive.write(file, f"{PLUGINS_DIR}/{key}/{relative}")
         os.replace(tmp, target)
     except OSError as exc:
         tmp.unlink(missing_ok=True)
@@ -228,6 +311,7 @@ def read_backup(path: Path) -> Backup:
                     background = (suffix, image)
             project = _member(archive, PROJECT, MAX_PROJECT_BYTES)
             chains_data = _member(archive, CHAINS, MAX_CHAINS_BYTES)
+            plugins = _embedded_plugins(archive, manifest.get("plugins"))
     except (zipfile.BadZipFile, OSError, RuntimeError, NotImplementedError) as exc:
         raise BackupError("Ce fichier n'est pas une sauvegarde REKA lisible.") from exc
     if project is not None and not project.lstrip().startswith(b"<REAPER_PROJECT"):
@@ -243,7 +327,48 @@ def read_backup(path: Path) -> Backup:
                   created=str(manifest.get("created") or ""),
                   kind=str(manifest.get("kind") or ""), host=str(manifest.get("host") or ""),
                   project_name=str(manifest.get("project") or ""),
-                  background=background, project=project, chains=chains)
+                  background=background, project=project, chains=chains,
+                  plugins=plugins, source=Path(path))
+
+
+_SAFE_PART = re.compile(r"^[^<>:\"|?*\x00-\x1f]+$")
+
+
+def _safe_relative(name: str) -> bool:
+    """Chemin relatif d'archive sans détour possible (pas de « .. », de lecteur…)."""
+    if not name or name.startswith(("/", "\\")) or "\\" in name:
+        return False
+    parts = name.split("/")
+    return all(part not in ("", ".", "..") and _SAFE_PART.match(part)
+               and part.rstrip(" .") == part for part in parts)
+
+
+def _embedded_plugins(archive: zipfile.ZipFile, listed) -> tuple[EmbeddedPlugin, ...]:
+    """Plugins annoncés par le manifeste, vérifiés contre le contenu de l'archive."""
+    if not isinstance(listed, list):
+        return ()
+    infos = archive.infolist()
+    plugins, total = [], 0
+    for item in listed[:MAX_PLUGINS]:
+        if not isinstance(item, dict):
+            continue
+        key, name = str(item.get("key", "")), str(item.get("name", ""))
+        if not key.isdigit() or not _safe_relative(name) or "/" in name:
+            continue
+        prefix = f"{PLUGINS_DIR}/{key}/"
+        members = [i for i in infos if i.filename.startswith(prefix) and not i.is_dir()]
+        relative = [i.filename[len(prefix):] for i in members]
+        if not members or len(members) > MAX_PLUGIN_FILES or not all(
+                _safe_relative(r) and (r == name or r.startswith(name + "/")) for r in relative):
+            log.warning("Plugin « %s » de la sauvegarde ignoré (contenu inattendu).", name)
+            continue
+        size = sum(i.file_size for i in members)
+        total += size
+        if total > MAX_PLUGINS_BYTES:
+            raise BackupError("Les plugins de cette sauvegarde sont trop volumineux.")
+        plugins.append(EmbeddedPlugin(key, str(item.get("path", ""))[:1024], name, size,
+                                      tuple(i.filename for i in members)))
+    return tuple(plugins)
 
 
 # --------------------------------------------------------------------------- #
@@ -284,6 +409,41 @@ def _project_name(stem: str) -> str:
         if not (folder / name).exists():
             return name
     raise BackupError("Trop de projets importés : fais le ménage dans le dossier de REKA.")
+
+
+def install_plugins(backup: Backup, chains: dict | None, folder: Path) -> list[str]:
+    """Extrait les plugins joints dans `folder`/plugins et fait pointer les
+    chaînes dessus, seulement pour les plugins absents de ce PC. Renvoie les
+    noms des plugins utilisés depuis la sauvegarde."""
+    if not backup.plugins or backup.source is None:
+        return []
+    root = (folder / PLUGINS_DIR).resolve()
+    wanted: dict[str, list[dict]] = {}
+    for strip in (chains or {}).get("strips", []):
+        for fx in strip.get("fx", []):
+            if not Path(fx.get("path", "")).exists():
+                wanted.setdefault(os.path.normcase(fx.get("path", "")).lower(), []).append(fx)
+    used = []
+    with zipfile.ZipFile(backup.source) as archive:
+        for plugin in backup.plugins:
+            users = wanted.get(os.path.normcase(plugin.path).lower())
+            if not users:
+                continue        # installé sur ce PC (ou plus utilisé) : on garde celui du PC
+            target = (root / f"{Path(plugin.name).stem}-{plugin.key}").resolve()
+            if not str(target).startswith(str(root)):
+                continue
+            prefix = f"{PLUGINS_DIR}/{plugin.key}/"
+            for member in plugin.members:
+                destination = (target / member[len(prefix):]).resolve()
+                if not str(destination).startswith(str(target) + os.sep):
+                    raise BackupError("Sauvegarde refusée : chemin de plugin invalide.")
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                with archive.open(member) as source, open(destination, "wb") as out:
+                    shutil.copyfileobj(source, out, 1 << 20)
+            for fx in users:
+                fx["path"] = str(target / plugin.name)
+            used.append(plugin.name)
+    return used
 
 
 def import_backup(cfg: dict, backup: Backup, installed_kinds: Iterable[str] | None = None,
@@ -345,10 +505,15 @@ def import_backup(cfg: dict, backup: Backup, installed_kinds: Iterable[str] | No
 
         if backup.chains is not None:
             from core.reka_host import CHAINS_FILENAME, save_chains_file
+            chains = copy.deepcopy(backup.chains)
+            report.plugins = install_plugins(backup, chains, folder)
+            if report.plugins:
+                report.notes.append("Plugins installés depuis la sauvegarde : "
+                                    + ", ".join(report.plugins) + ".")
             target = folder / CHAINS_FILENAME
             if target.is_file():           # chaînes d'avant l'import : gardées à côté
                 target.replace(folder / f"avant-import-{CHAINS_FILENAME}")
-            save_chains_file(target, backup.chains)
+            save_chains_file(target, chains)
             report.chains = True
             count = backup.effect_count
             report.notes.append(f"Chaînes d'effets importées ({count} effet{'s' if count > 1 else ''}"

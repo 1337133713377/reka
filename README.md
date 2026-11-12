@@ -271,7 +271,8 @@ Un clic dans ⚙ → **Apparence** et toute la console change : couleurs, faders
 |---|---|---|
 | **Rich Presence** | ⚙ → Discord | « Joue à REKA » sur ton profil, avec un bouton pour la télécharger. Une case pour le couper. |
 | **Micro synchronisé** | ⚙ → Discord | Le Muet d'un canal et le micro de Discord se suivent, dans le sens que tu choisis. |
-| **Export / import** | ⚙ → Général | Toute ta config dans un fichier `.reka` : pour changer de PC, réinstaller Windows ou partager tes réglages. Avec le moteur intégré, tes chaînes d'effets et les réglages de chaque plugin voyagent aussi. |
+| **Export / import** | ⚙ → Général | Toute ta config dans un fichier `.reka` : pour changer de PC, réinstaller Windows ou partager tes réglages. Avec le moteur intégré, tes chaînes d'effets, les réglages de chaque plugin et même les plugins eux-mêmes voyagent aussi. |
+| **Quitter REAPER** | ⚙ → Général | *Passer au moteur REKA en gardant mes effets…* : tes plugins et leurs réglages passent dans le moteur intégré, sans rien refaire. |
 
 > [!NOTE]
 > La Rich Presence marche sans rien régler. Le micro synchronisé demande une **application Discord** à ton nom (gratuite, 2 minutes) : Discord réserve ce réglage au propriétaire de l'application, chacun crée donc la sienne. L'onglet ⚙ → Discord explique les étapes.

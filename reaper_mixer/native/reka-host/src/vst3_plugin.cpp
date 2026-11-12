@@ -2,6 +2,7 @@
 // (pluginterfaces, licence MIT) : pas besoin du reste du SDK.
 #include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <cstring>
 #include <map>
 #include <mutex>
@@ -471,12 +472,22 @@ public:
         int32 count = factory_->countClasses();
         bool found = false;
         TUID cid = {};
-        for (int pass = 0; pass < 2 && !found; ++pass) {
+        // Passes : 0 = la classe qui porte le nom demandé (plugin repris de REAPER),
+        // 1 = un effet, 2 = n'importe quelle classe audio
+        std::string wanted = desc_.name;
+        for (char& c : wanted) c = (char)std::tolower((unsigned char)c);
+        for (int pass = 0; pass < 3 && !found; ++pass) {
+            if (pass == 0 && (!desc_.uid.empty() || wanted.empty())) continue;
             for (int32 i = 0; i < count; ++i) {
                 PClassInfo info;
                 if (factory_->getClassInfo(i, &info) != kResultOk) continue;
                 if (std::strcmp(info.category, kVstAudioEffectClass) != 0) continue;
                 if (!desc_.uid.empty() && uidToHex(info.cid) != desc_.uid) continue;
+                if (pass == 0) {
+                    std::string name = info.name;
+                    for (char& c : name) c = (char)std::tolower((unsigned char)c);
+                    if (name != wanted) continue;
+                }
                 bool instrument = false;
                 if (factory2) {
                     PClassInfo2 info2;
@@ -484,13 +495,12 @@ public:
                         instrument = std::strstr(info2.subCategories, "Instrument") != nullptr &&
                                      std::strstr(info2.subCategories, "Fx") == nullptr;
                 }
-                if (instrument && pass == 0) continue;  // un effet d'abord
+                if (instrument && pass == 1) continue;  // un effet d'abord
                 std::memcpy(cid, info.cid, sizeof(TUID));
                 desc_.name = info.name;
                 found = true;
                 break;
             }
-            if (!desc_.uid.empty() && !found) break;
         }
         if (factory2) factory2->release();
         if (!found) {
@@ -606,6 +616,45 @@ public:
             }
         }
         return true;
+    }
+
+    void setParams(const std::vector<std::pair<std::string, double>>& params) override {
+        if (!controller_ || params.empty()) return;
+        int32 count = controller_->getParameterCount();
+        std::vector<ParameterInfo> infos;
+        std::map<std::string, size_t> byTitle;
+        for (int32 i = 0; i < count; ++i) {
+            ParameterInfo info{};
+            if (controller_->getParameterInfo(i, info) != kResultOk) continue;
+            std::wstring title;
+            for (const char16* c = info.title; *c; ++c) title += (wchar_t)*c;
+            byTitle.emplace(narrow(title), infos.size());
+            infos.push_back(info);
+        }
+        // Par nom si la plupart correspondent, sinon par position
+        size_t matched = 0;
+        for (const auto& p : params) matched += byTitle.count(p.first);
+        bool byName = matched * 2 >= std::min(params.size(), infos.size());
+        for (size_t i = 0; i < params.size(); ++i) {
+            const ParameterInfo* info = nullptr;
+            if (byName) {
+                auto it = byTitle.find(params[i].first);
+                if (it != byTitle.end()) info = &infos[it->second];
+            } else if (i < infos.size()) {
+                info = &infos[i];
+            }
+            if (!info || (info->flags & ParameterInfo::kIsReadOnly)) continue;
+            controller_->setParamNormalized(info->id, params[i].second);
+            fifo_.push(info->id, params[i].second);
+        }
+        // Un bloc de silence : le processeur prend les valeurs (et son état les garde)
+        bool wasPrepared = isPrepared();
+        if (!wasPrepared && !prepare(48000.0, 512)) return;
+        int n = std::min(preparedBlock_, 512);
+        std::vector<float> l((size_t)n), r((size_t)n), ol((size_t)n), orr((size_t)n);
+        float* in[2] = {l.data(), r.data()};
+        float* out[2] = {ol.data(), orr.data()};
+        process(in, out, n);
     }
 
     bool hasEditor() const override { return controller_ != nullptr; }

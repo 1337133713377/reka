@@ -31,7 +31,7 @@ import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
-from PySide6.QtCore import QObject
+from PySide6.QtCore import QObject, Signal
 
 from core import config
 from core.effects import HOST_REAPER, EffectsHost, samples_to_ms
@@ -49,6 +49,7 @@ LEGACY_STARTUP_MARKERS = (("-- >>> REAPER Mixer", "-- <<< REAPER Mixer"),)
 POLL_INTERVAL_S = 0.05
 HEARTBEAT_TIMEOUT_S = 3.0
 FXLIST_TIMEOUT_S = 15.0
+FXEXPORT_TIMEOUT_S = 30.0
 SAVE_TIMEOUT_S = 4.0
 ACTION_PREFERENCES = 40016   # « Options: Preferences… »
 
@@ -224,9 +225,54 @@ def track_latency_samples(track: TrackInfo | None) -> int:
     return sum(max(0, fx.latency) for fx in track.fx if fx.enabled)
 
 
+@dataclass(frozen=True)
+class ExportedFx:
+    """Un effet de REAPER tel que le pont l'exporte (passage au moteur intégré)."""
+    type: str                           # VST, VST3, JS, CLAP…
+    ident: str                          # fichier du plugin (« realimit.dll<1919708532 »)
+    name: str                           # nom affiché dans REAPER
+    enabled: bool
+    chunk: str                          # réglages bruts (VST2), base64, ou vide
+    params: tuple[tuple[str, float], ...]
+
+
+@dataclass(frozen=True)
+class ExportedTrack:
+    channel: int
+    enabled: bool                       # chaîne active
+    fx: tuple[ExportedFx, ...]
+
+
+def parse_fxexport(text: str, request: str) -> list[ExportedTrack] | None:
+    """fxexport.txt écrit par le pont ; None tant qu'il est incomplet."""
+    lines = text.split("\n")
+    if not lines or lines[0] != f"FXEXPORT {request}" or f"END {request}" not in lines:
+        return None
+    tracks: dict[int, tuple[bool, list[ExportedFx]]] = {}
+    order: list[int] = []
+    for line in lines[1:lines.index(f"END {request}")]:
+        fields = [_unescape(f) for f in line.split("\t")]
+        try:
+            if fields[0] == "TRACK" and len(fields) >= 3:
+                channel = int(fields[1])
+                tracks[channel] = (fields[2] == "1", [])
+                order.append(channel)
+            elif fields[0] == "FX" and len(fields) >= 9 and int(fields[1]) in tracks:
+                params = []
+                for item in filter(None, fields[8].split(";")):
+                    pname, _, value = item.rpartition("=")
+                    params.append((pname, float(value)))
+                tracks[int(fields[1])][1].append(ExportedFx(
+                    fields[3], fields[4], fields[5], fields[6] == "1", fields[7], tuple(params)))
+        except (ValueError, IndexError):
+            log.debug("Ligne d'export ignorée : %r", line)
+    return [ExportedTrack(ch, tracks[ch][0], tuple(tracks[ch][1])) for ch in order]
+
+
 class ReaperController(EffectsHost):
     kind = HOST_REAPER
     process_key = "reaper"
+    fx_export_ready = Signal(object)    # list[ExportedTrack] ou None (échec)
     manages_fx = True
     can_move_fx = True
     has_projects = True
@@ -258,6 +304,7 @@ class ReaperController(EffectsHost):
         self._project = ""
         self._seen_errors: set[int] = set()
         self._fx_request: tuple[str, float] | None = None
+        self._export_request: tuple[str, float] | None = None
         self._installed_fx: list[tuple[str, str]] | None = None
         self._error_file_logged = False
         self._io_latency: tuple[int, int] | None = None
@@ -444,6 +491,33 @@ class ReaperController(EffectsHost):
             self._fx_request = (request, time.monotonic())
         self._send("list_fx", request)
 
+    def request_fx_export(self) -> None:
+        """Demande les effets de toutes les pistes, avec leurs réglages ;
+        réponse via fx_export_ready."""
+        request = uuid.uuid4().hex[:8]
+        with self._lock:
+            self._export_request = (request, time.monotonic())
+        self._send("export_fx", request)
+
+    def _read_fxexport(self) -> None:
+        with self._lock:
+            request = self._export_request
+        if request is None:
+            return
+        request_id, started = request
+        try:
+            text = (self._ipc_dir / "fxexport.txt").read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            text = ""
+        result = parse_fxexport(text, request_id) if text else None
+        if result is None and time.monotonic() - started <= FXEXPORT_TIMEOUT_S:
+            return
+        if result is None:
+            log.warning("REAPER n'a pas exporté ses effets.")
+        with self._lock:
+            self._export_request = None
+        self.fx_export_ready.emit(result)
+
     def _strip_name(self, strip: int) -> str:
         names = self._cfg.get("ui", {}).get("strip_names", [])
         return names[strip] if strip < len(names) else f"Strip {strip + 1}"
@@ -479,6 +553,7 @@ class ReaperController(EffectsHost):
                 self._write_commands()
                 self._read_state()
                 self._read_fxlist()
+                self._read_fxexport()
                 self._check_bridge_error()
             except Exception:
                 log.exception("Erreur dans la liaison avec REAPER")

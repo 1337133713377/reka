@@ -61,7 +61,8 @@
     "strips": []
   },
   "reka_host": {
-    "path": ""
+    "path": "",
+    "embed_plugins": true
   },
   "vst": {
     "extra_dirs": []

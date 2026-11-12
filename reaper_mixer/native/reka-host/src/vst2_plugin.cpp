@@ -116,6 +116,20 @@ public:
         return true;
     }
 
+    bool setChunk(const std::vector<uint8_t>& data) override {
+        if (!(effect_->flags & vst2::effFlagsProgramChunks) || data.empty()) return false;
+        std::vector<uint8_t> chunk(data);
+        dispatch(vst2::effSetChunk, 0, (intptr_t)chunk.size(), chunk.data());
+        return true;
+    }
+
+    void setParams(const std::vector<std::pair<std::string, double>>& params) override {
+        // Même ordre que dans le plugin (REAPER ajoute ses propres paramètres à la fin)
+        int32_t count = std::min<int32_t>((int32_t)params.size(), effect_->numParams);
+        for (int32_t i = 0; i < count; ++i)
+            effect_->setParameter(effect_, i, (float)params[(size_t)i].second);
+    }
+
     bool hasEditor() const override { return effect_->flags & vst2::effFlagsHasEditor; }
 
     bool openEditor(HWND parent, int& width, int& height) override {

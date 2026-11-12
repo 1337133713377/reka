@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #ifndef WIN32_LEAN_AND_MEAN
@@ -44,6 +45,12 @@ public:
     virtual int latency() const = 0;
     virtual bool getState(std::vector<uint8_t>& out) = 0;
     virtual bool setState(const std::vector<uint8_t>& data) = 0;
+    // Réglages repris d'un autre hôte (REAPER) : « chunk » brut du plugin
+    // (VST2), sinon valeurs normalisées des paramètres, avec leur nom.
+    virtual bool setChunk(const std::vector<uint8_t>& data) { (void)data; return false; }
+    virtual void setParams(const std::vector<std::pair<std::string, double>>& params) {
+        (void)params;
+    }
     virtual bool hasEditor() const = 0;
     // Ouvre l'interface dans `parent` ; renvoie sa taille.
     virtual bool openEditor(HWND parent, int& width, int& height) = 0;
