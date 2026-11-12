@@ -7,7 +7,8 @@ REKA parle au client Discord installé sur le PC, par son canal local
 Unix ailleurs. Rien ne passe par un serveur de REKA.
 
 - Rich Presence : il suffit de l'identifiant d'une application Discord
-  (Application ID). Aucune autorisation n'est demandée.
+  (Application ID) ; celle de REKA est utilisée par défaut. Aucune autorisation
+  n'est demandée.
 - Micro synchronisé : Discord réserve la lecture et le réglage du micro aux
   applications qu'il a approuvées, et au propriétaire d'une application (plus
   ses testeurs). Chacun crée donc sa propre application sur
@@ -46,10 +47,10 @@ from core import config
 log = logging.getLogger(__name__)
 
 # Application Discord « REKA » utilisée quand l'utilisateur n'en indique pas :
-# son nom est celui affiché après « Joue à ». À renseigner une fois l'application
-# créée sur https://discord.com/developers/applications (vide : Rich Presence
-# inactive tant qu'un Application ID n'est pas saisi dans les réglages).
-REKA_CLIENT_ID = ""
+# son nom est celui affiché après « Joue à », et elle porte l'image « reka ».
+# Un Application ID est public (il ne donne aucun droit) ; le Client Secret,
+# lui, n'est jamais dans le code.
+REKA_CLIENT_ID = "1570441366662549534"
 DEVELOPER_PORTAL = "https://discord.com/developers/applications"
 DOWNLOAD_URL = "https://github.com/1337133713377/reka"
 REDIRECT_URI = "http://localhost"        # à déclarer dans l'application Discord (OAuth2)

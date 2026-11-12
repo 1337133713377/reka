@@ -194,7 +194,11 @@ def test_presence_lines_from_config(cfg):
 def test_settings_from_config(cfg, monkeypatch):
     settings = DiscordSettings.from_config(cfg)
     assert settings.presence and not settings.mute_sync and settings.enabled
-    assert not settings.valid_id                    # pas d'application : rien n'est envoyé
+    # Rien à régler : l'application Discord « REKA » est utilisée, sans secret
+    assert settings.client_id == discord_rpc.REKA_CLIENT_ID == "1570441366662549534"
+    assert settings.valid_id and settings.client_secret == ""
+    monkeypatch.setattr(discord_rpc, "REKA_CLIENT_ID", "")
+    assert not DiscordSettings.from_config(cfg).valid_id     # sans application : rien n'est envoyé
     cfg["discord"].update(client_id=" 123456 ", client_secret=" s3cret ", rich_presence=False)
     settings = DiscordSettings.from_config(cfg)
     assert (settings.client_id, settings.client_secret) == ("123456", "s3cret")

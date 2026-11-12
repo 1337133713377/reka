@@ -126,14 +126,16 @@ passe par un serveur de REKA.
   Discord se suivent. *Sens* : dans les deux sens, REKA → Discord seulement, ou Discord → REKA
   seulement. Au lancement, c'est l'état de REKA qui est repris (sauf dans le dernier sens).
 
-Les deux utilisent une **application Discord**, dont le nom est celui affiché après « Joue à » :
+La **Rich Presence marche sans rien régler** : REKA utilise son application Discord (celle
+dont le nom s'affiche après « Joue à », et qui porte l'image `reka`). Le **micro synchronisé**
+demande la tienne :
 
 1. [discord.com/developers](https://discord.com/developers/applications) → **New Application**,
-   nomme-la « REKA ». Copie son **Application ID** dans ⚙ → Discord : la Rich Presence marche.
-   Pour l'image du profil, ajoute une image nommée `reka` dans *Rich Presence → Art Assets*.
-2. Pour le micro synchronisé seulement : onglet **OAuth2** → ajoute la redirection
-   `http://localhost`, puis **Reset Secret** et copie le **Client Secret** dans ⚙ → Discord.
-   Coche *Synchroniser le Muet…* : Discord ouvre une fenêtre pour autoriser REKA, une seule
+   nomme-la « REKA ». Copie son **Application ID** dans ⚙ → Discord. Pour l'image du profil,
+   ajoute une image nommée `reka` dans *Rich Presence → Art Assets*.
+2. Onglet **OAuth2** → ajoute la redirection `http://localhost`, puis **Reset Secret** et
+   copie le **Client Secret** dans ⚙ → Discord.
+3. Coche *Synchroniser le Muet…* : Discord ouvre une fenêtre pour autoriser REKA, une seule
    fois (le jeton est gardé dans `config.json`, et renouvelé tout seul).
 
 Pourquoi sa propre application ? Discord réserve la lecture et le réglage du micro aux

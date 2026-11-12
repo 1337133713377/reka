@@ -274,7 +274,7 @@ Un clic dans ⚙ → **Apparence** et toute la console change : couleurs, faders
 | **Export / import** | ⚙ → Général | Toute ta config dans un fichier `.reka` : pour changer de PC, réinstaller Windows ou partager tes réglages. |
 
 > [!NOTE]
-> Discord demande une **application Discord** à ton nom (gratuite, 2 minutes) : l'onglet ⚙ → Discord explique les étapes. Pour le micro synchronisé, Discord réserve ce réglage au propriétaire de l'application : chacun crée donc la sienne.
+> La Rich Presence marche sans rien régler. Le micro synchronisé demande une **application Discord** à ton nom (gratuite, 2 minutes) : Discord réserve ce réglage au propriétaire de l'application, chacun crée donc la sienne. L'onglet ⚙ → Discord explique les étapes.
 
 <br>
 

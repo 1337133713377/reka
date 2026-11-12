@@ -1137,7 +1137,8 @@ class SettingsDialog(QDialog):
         box.addWidget(_hint(
             "Coupe ton micro dans REKA : le micro barré s'affiche dans Discord, et l'inverse. "
             "Au lancement, c'est l'état de REKA qui est repris. Demande ta propre application "
-            "Discord (ci-dessous) : Discord réserve ce réglage au propriétaire de l'application."))
+            "Discord (ci-dessous) : Discord réserve ce réglage au propriétaire de l'application. "
+            "La Rich Presence, elle, marche sans rien régler."))
         return group
 
     def _discord_app_group(self) -> QGroupBox:
@@ -1167,11 +1168,12 @@ class SettingsDialog(QDialog):
         row.addWidget(self.discord_authorize)
         box.addLayout(row)
         steps = QLabel(
-            f"Créer ton application (2 minutes) : <a href=\"{discord_rpc.DEVELOPER_PORTAL}\" "
+            "Laisse vide pour la Rich Presence seule. Pour le micro synchronisé, crée ton "
+            f"application (2 minutes) : <a href=\"{discord_rpc.DEVELOPER_PORTAL}\" "
             f"style=\"color: {styles.GREEN_NEON};\">"
             "discord.com/developers</a> → <b>New Application</b>, nomme-la « REKA » (c'est le nom "
-            "affiché après « Joue à »). Copie son <b>Application ID</b> ici. Pour le micro "
-            f"synchronisé : onglet <b>OAuth2</b> → ajoute la redirection <b>{discord_rpc.REDIRECT_URI}</b>, "
+            "affiché après « Joue à ») et copie son <b>Application ID</b> ici. Onglet "
+            f"<b>OAuth2</b> → ajoute la redirection <b>{discord_rpc.REDIRECT_URI}</b>, "
             "puis <b>Reset Secret</b> et copie le <b>Client Secret</b> ici. Discord te demandera "
             "une fois d'autoriser REKA.")
         steps.setObjectName("hint")
