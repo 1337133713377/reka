@@ -179,6 +179,30 @@ local HANDLERS = {
     reaper.TrackFX_Delete(strip_track(a[1]), tonumber(a[2]))
     save_project()
   end,
+  -- Déplace (ou copie) un effet, dans sa chaîne ou vers la piste d'une autre strip :
+  -- canal source, index, canal cible, nom de la strip cible, création autorisée
+  -- (1/0), index d'arrivée, copie (1/0). Les réglages du plugin suivent.
+  move_fx = function(a)
+    if not reaper.TrackFX_CopyToTrack then
+      error("cette version de REAPER ne sait pas déplacer un effet (5.95 ou plus récent)", 0)
+    end
+    local src, from = strip_track(a[1]), tonumber(a[2])
+    if not from or from < 0 or from >= reaper.TrackFX_GetCount(src) then
+      error("effet introuvable sur la piste d'origine", 0)
+    end
+    local dst = find_track(a[3])
+    if not dst then
+      if a[5] ~= "1" then strip_track(a[3]) end  -- lève l'erreur explicite
+      dst = create_track(a[3], a[4])
+    end
+    local copy = a[7] == "1"
+    local last = reaper.TrackFX_GetCount(dst)
+    if dst == src and not copy then last = last - 1 end  -- déplacement : la chaîne garde sa taille
+    local to = math.max(0, math.min(tonumber(a[6]) or last, last))
+    if dst == src and not copy and to == from then return end
+    reaper.TrackFX_CopyToTrack(src, from, dst, to, not copy)
+    save_project()
+  end,
   fx_enabled = function(a)
     reaper.TrackFX_SetEnabled(strip_track(a[1]), tonumber(a[2]), a[3] == "1")
     save_project()

@@ -14,6 +14,7 @@ from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import (QAbstractButton, QFrame, QHBoxLayout, QLabel, QSizePolicy,
                                QVBoxLayout, QWidget)
 
+from core.engine_load import CPU_HIGH, CPU_WARN, GPU_HIGH, GPU_WARN, EngineLoad, level
 from ui import styles
 from ui.fader import format_db
 from ui.knob import Knob
@@ -317,6 +318,72 @@ class EngineButton(QAbstractButton):
         super().leaveEvent(event)
 
 
+class LoadMeter(QWidget):
+    """Charge du moteur d'effets (REAPER et ses plugins…) : une barre CPU et,
+    si Windows la donne, une barre GPU. Ambre puis rouge quand elle monte."""
+
+    ROW = 14
+    PADDING = 4
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._load: EngineLoad | None = None
+        self._engine = "moteur d'effets"
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.setFixedHeight(self.ROW + 2 * self.PADDING)
+        self.hide()
+
+    def load(self) -> EngineLoad | None:
+        return self._load
+
+    def rows(self) -> list[tuple[str, float, int]]:
+        """(nom, pourcentage, niveau 0-2) de chaque barre affichée."""
+        load = self._load
+        if load is None:
+            return []
+        rows = [("CPU", load.cpu, level(load.cpu, CPU_WARN, CPU_HIGH))]
+        if load.gpu is not None:
+            rows.append(("GPU", load.gpu, level(load.gpu, GPU_WARN, GPU_HIGH)))
+        return rows
+
+    def set_load(self, load: EngineLoad | None, engine: str = "") -> None:
+        self._load = load
+        if engine:
+            self._engine = engine
+        if load is not None:
+            self.setFixedHeight(len(self.rows()) * self.ROW + 2 * self.PADDING)
+            self.setToolTip(load.describe(self._engine) + "\n\nPour un plugin précis : clic droit "
+                            "sur l'effet → « Mesurer sa charge CPU ».")
+        self.update()
+
+    def paintEvent(self, _event) -> None:  # noqa: N802
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        rect = QRectF(0.5, 0.5, self.width() - 1, self.height() - 1)
+        p.setPen(QPen(QColor(styles.BORDER_COLUMN), 1))
+        p.setBrush(QColor(styles.BG_DEEP))
+        p.drawRoundedRect(rect, 8, 8)
+        colors = (styles.accent("engines", styles.MASTER_SCOPE), styles.SOLO_ON, styles.VU_RED)
+        for n, (name, value, state) in enumerate(self.rows()):
+            top = self.PADDING + n * self.ROW
+            p.setFont(styles.font(9, QFont.Weight.DemiBold))
+            p.setPen(QColor(styles.TEXT_SECONDARY))
+            p.drawText(QRectF(8, top, 26, self.ROW),
+                       Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, name)
+            p.setPen(QColor(styles.TEXT_PRIMARY if state == 0 else colors[state]))
+            p.drawText(QRectF(self.width() - 40, top, 33, self.ROW),
+                       Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+                       f"{value:.0f} %")
+            bar = QRectF(36, top + self.ROW / 2 - 2, max(8.0, self.width() - 36 - 44), 4)
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QColor(styles.BUTTON_BG))
+            p.drawRoundedRect(bar, 2, 2)
+            filled = bar.width() * max(0.0, min(100.0, value)) / 100.0
+            if filled > 0:
+                p.setBrush(QColor(colors[state]))
+                p.drawRoundedRect(QRectF(bar.x(), bar.y(), max(2.0, filled), bar.height()), 2, 2)
+
+
 class MasterWidget(QFrame):
     settingsRequested = Signal()
     projectRequested = Signal()
@@ -361,6 +428,8 @@ class MasterWidget(QFrame):
         self._engine_row.setSpacing(4)
         self.engines: dict[str, EngineButton] = {}
         layout.addLayout(self._engine_row)
+        self.load = LoadMeter()               # affiché quand le moteur d'effets est mesuré
+        layout.addWidget(self.load)
 
         knob_section = make_section()
         knob_box = QVBoxLayout(knob_section)
@@ -437,6 +506,11 @@ class MasterWidget(QFrame):
         button = self.engines.get(key)
         if button is not None and button.is_shown() != shown:
             button.set_shown(shown)
+
+    def set_load(self, load: EngineLoad | None, engine: str = "", visible: bool = True) -> None:
+        """Charge CPU / GPU du moteur d'effets ; cachée sans mesure ou si l'option est éteinte."""
+        self.load.set_load(load, engine)
+        self.load.setVisible(visible and load is not None)
 
     def set_update(self, version: str | None) -> None:
         """Affiche (ou cache) la pill de mise à jour."""

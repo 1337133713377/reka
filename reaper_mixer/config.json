@@ -67,6 +67,7 @@
     "geometry": "",
     "minimize_to_tray": false,
     "show_media": true,
+    "show_load": true,
     "background_image": "",
     "background_darkness": 0.45,
     "panel_opacity": 1.0,

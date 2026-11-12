@@ -56,6 +56,17 @@ function reaper.TrackFX_AddByName(tr, name)
   return -1
 end
 function reaper.TrackFX_Delete(tr, i) table.remove(tr.fx, i + 1); return true end
+-- Comme REAPER : en déplacement, `to` est l'index d'arrivée ; en copie, l'index d'insertion
+function reaper.TrackFX_CopyToTrack(src, from, dst, to, is_move)
+  local fx = src.fx[from + 1]
+  assert(fx, "TrackFX_CopyToTrack : effet source absent")
+  if is_move then
+    table.remove(src.fx, from + 1)
+  else
+    fx = { name = fx.name, enabled = fx.enabled, open = false, pdc = fx.pdc }
+  end
+  table.insert(dst.fx, math.min(to, #dst.fx) + 1, fx)
+end
 function reaper.TrackFX_SetEnabled(tr, i, e) tr.fx[i + 1].enabled = e end
 function reaper.TrackFX_GetEnabled(tr, i) return tr.fx[i + 1].enabled end
 function reaper.TrackFX_GetOpen(tr, i) return tr.fx[i + 1].open end

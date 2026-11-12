@@ -52,7 +52,8 @@ from core.media import create_media_backend
 from core.process_manager import (AppNotInstalledError, OtherEditionRunningError, ProcessManager,
                                   ProcessManagerError, StartupAborted,
                                   installed_voicemeeter_kinds, reaper_project)
-from core.effects import HOST_REAPER, EffectsHost, create_host
+from core.effects import HOST_NONE, HOST_REAPER, EffectsHost, create_host
+from core.engine_load import EngineLoadMonitor, create_monitor
 from core.updater import UpdateChecker, cleanup_previous, load_build_info
 from core.voicemeeter_ctrl import EDITIONS, VoicemeeterController, edition
 from ui import styles
@@ -395,7 +396,8 @@ class MixerApp:
             self._window = MainWindow(cfg=self._cfg, vm=self._vm,
                                       reaper=self._host, processes=self._processes,
                                       apps=create_backend(self._cfg), updater=self._updater,
-                                      media=create_media_backend(self._cfg))
+                                      media=create_media_backend(self._cfg),
+                                      load=create_monitor(self._processes, self._host))
             if self._host.kind != HOST_REAPER:
                 self._host.start()    # FL Studio, Equalizer APO : dans le thread UI
         except Exception as exc:
@@ -697,13 +699,14 @@ def demo_host(cfg: dict, kind: str | None, processes) -> EffectsHost:
 def run_demo(app: QApplication, cfg: dict, selftest: str | None, host: str | None = None) -> int:
     """Console avec des moteurs simulés ; avec --selftest, capture puis quitte."""
     from core.app_volume import DemoAppVolumes
-    from core.demo import DemoProcesses, DemoVoicemeeter
+    from core.demo import DemoLoad, DemoProcesses, DemoVoicemeeter
     from core.media import DemoMedia
 
     vm, processes = DemoVoicemeeter(cfg), DemoProcesses()
     reaper = demo_host(cfg, host, processes)
+    load = EngineLoadMonitor(DemoLoad(reaper)) if reaper.kind != HOST_NONE else None
     window = MainWindow(cfg=cfg, vm=vm, reaper=reaper, processes=processes, persist=False,
-                        apps=DemoAppVolumes(), media=DemoMedia())
+                        apps=DemoAppVolumes(), media=DemoMedia(), load=load)
     if reaper.kind != HOST_REAPER:
         reaper.start()
     if selftest is None:
@@ -784,6 +787,9 @@ def run_selftest(app: QApplication, cfg: dict, window: MainWindow, vm, reaper, p
             capture(image.with_name(f"{image.stem}_apps{image.suffix}"), popup)
             popup.close()
             pump(0.1)
+    # Charge du moteur d'effets (simulée) : jauges CPU / GPU du Master
+    if reaper.kind != HOST_NONE and (window.master.load.isHidden() or not window.master.load.rows()):
+        problems.append("jauges CPU / GPU absentes du Master")
     problems.extend(_selftest_app_volume(report))
     problems.extend(_selftest_media(report, window))
 

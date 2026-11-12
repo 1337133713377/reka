@@ -23,7 +23,7 @@ from core.reaper_ctrl import TrackInfo
 from core.voicemeeter_ctrl import StripParams
 from ui import styles
 from ui.fader import Fader, format_db
-from ui.fx_pill import PILL_HEIGHT, FxPill
+from ui.fx_pill import PILL_HEIGHT, FxPill, decode_fx
 from ui.intellipan import PAD_HEIGHT, IntelliPad
 from ui.knob import Knob
 from ui.vu_meter import ClipLed, VuMeter
@@ -178,17 +178,38 @@ class FxList(QWidget):
     openRequested = Signal(int)
     bypassRequested = Signal(int, bool)
     removeRequested = Signal(int)
+    measureRequested = Signal(int)
+    moveRequested = Signal(int, int, int, bool)   # strip et index d'origine, place d'insertion, copie
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._pills: list[FxPill] = []
         self._hover_slot = -1
+        self._drop_gap = -1                     # place d'insertion survolée pendant un glisser
         self._enabled = True
+        self._movable = False
+        self._measurable = False
         self._add_label = "+ Ajouter un effet"
         self._hint = ""
         self.color_scope: int | None = None     # canal (couleur des pills)
+        self.strip_index = -1                   # strip de la liste (glisser-déposer)
         self.setMouseTracking(True)
+        self.setAcceptDrops(True)
+        self._drop_marker = QFrame(self)
+        self._drop_marker.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self._drop_marker.hide()
         self._resize_for(0)
+
+    def set_abilities(self, movable: bool, measurable: bool) -> None:
+        """Plugins déplaçables à la souris / charge CPU mesurable (selon le moteur)."""
+        self._movable, self._measurable = movable, measurable
+        for pill in self._pills:
+            pill.set_abilities(movable, measurable)
+
+    def set_costs(self, costs: list[str]) -> None:
+        """Charge mesurée de chaque plugin (texte, vide si non mesurée)."""
+        for pill, cost in zip(self._pills, costs):
+            pill.set_cost(cost)
 
     def set_texts(self, add_label: str, hint: str) -> None:
         """Texte de l'emplacement libre au survol, et de la zone vide."""
@@ -213,9 +234,12 @@ class FxList(QWidget):
                 continue
             pill = FxPill(name, enabled, is_open, self)
             pill.color_scope = self.color_scope
+            pill.strip, pill.index = self.strip_index, index
+            pill.set_abilities(self._movable, self._measurable)
             pill.clicked.connect(lambda i=index: self.openRequested.emit(i))
             pill.bypassRequested.connect(lambda on, i=index: self.bypassRequested.emit(i, on))
             pill.removeRequested.connect(lambda i=index: self.removeRequested.emit(i))
+            pill.measureRequested.connect(lambda i=index: self.measureRequested.emit(i))
             pill.show()
             self._pills.append(pill)
         self._resize_for(len(effects))
@@ -260,6 +284,56 @@ class FxList(QWidget):
         if (event.button() == Qt.MouseButton.LeftButton and self._enabled
                 and self._slot_at(event.position().y()) >= len(self._pills)):
             self.addRequested.emit()
+
+    # ------------------------------------------------- glisser-déposer d'un plugin
+    def gap_at(self, y: float) -> int:
+        """Place d'insertion (0 = avant le premier plugin) la plus proche de `y`."""
+        return max(0, min(len(self._pills), int((y + SLOT_PITCH / 2) // SLOT_PITCH)))
+
+    def _accepts(self, event) -> bool:
+        return self._enabled and self._movable and decode_fx(event.mimeData()) is not None
+
+    def dragEnterEvent(self, event) -> None:  # noqa: N802
+        self.dragMoveEvent(event)
+
+    def dragMoveEvent(self, event) -> None:  # noqa: N802
+        if not self._accepts(event):
+            event.ignore()
+            return
+        self._show_drop_gap(self.gap_at(event.position().y()))
+        self._accept_drop(event)
+
+    @staticmethod
+    def _accept_drop(event) -> bool:
+        """Accepte le dépôt : déplacement, ou copie si Ctrl est maintenu. True = copie."""
+        copy = bool(event.modifiers() & Qt.KeyboardModifier.ControlModifier)
+        event.setDropAction(Qt.DropAction.CopyAction if copy else Qt.DropAction.MoveAction)
+        event.accept()
+        return copy
+
+    def dragLeaveEvent(self, _event) -> None:  # noqa: N802
+        self._show_drop_gap(-1)
+
+    def _show_drop_gap(self, gap: int) -> None:
+        """Trait d'insertion du plugin glissé (au-dessus des pills), -1 = aucun."""
+        self._drop_gap = gap
+        if gap < 0:
+            self._drop_marker.hide()
+            return
+        y = max(0, min(self.height() - 2, gap * SLOT_PITCH - 2))
+        self._drop_marker.setStyleSheet(f"background: {styles.GREEN_NEON}; border-radius: 1px;")
+        self._drop_marker.setGeometry(2, y, self.width() - 4, 2)
+        self._drop_marker.raise_()
+        self._drop_marker.show()
+
+    def dropEvent(self, event) -> None:  # noqa: N802
+        self._show_drop_gap(-1)
+        source = decode_fx(event.mimeData()) if self._accepts(event) else None
+        if source is None:
+            event.ignore()
+            return
+        copy = self._accept_drop(event)
+        self.moveRequested.emit(source[0], source[1], self.gap_at(event.position().y()), copy)
 
     def paintEvent(self, _event) -> None:  # noqa: N802
         p = QPainter(self)
@@ -370,6 +444,8 @@ class StripWidget(QFrame):
     fxOpenRequested = Signal(int, int)
     fxBypassRequested = Signal(int, int, bool)
     fxRemoveRequested = Signal(int, int)
+    fxMeasureRequested = Signal(int, int)
+    fxMoveRequested = Signal(int, int, int, int, bool)   # strip et index d'origine, strip et place d'arrivée, copie
     padMoved = Signal(int, str, float, float)    # (strip, mode, x, y)
     padModeChanged = Signal(int, str)
     appsRequested = Signal(int)
@@ -462,10 +538,14 @@ class StripWidget(QFrame):
         box.addLayout(header)
 
         self.fx_list = FxList()
+        self.fx_list.strip_index = self.index
         self.fx_list.addRequested.connect(lambda: self.fxAddRequested.emit(self.index))
         self.fx_list.openRequested.connect(lambda i: self.fxOpenRequested.emit(self.index, i))
         self.fx_list.bypassRequested.connect(lambda i, on: self.fxBypassRequested.emit(self.index, i, on))
         self.fx_list.removeRequested.connect(lambda i: self.fxRemoveRequested.emit(self.index, i))
+        self.fx_list.measureRequested.connect(lambda i: self.fxMeasureRequested.emit(self.index, i))
+        self.fx_list.moveRequested.connect(
+            lambda strip, i, gap, copy: self.fxMoveRequested.emit(strip, i, self.index, gap, copy))
         scroll = QScrollArea()
         scroll.setObjectName("fxScroll")
         scroll.setWidgetResizable(True)
@@ -593,6 +673,15 @@ class StripWidget(QFrame):
         """Textes de la zone d'effets selon le moteur (REAPER, FL Studio, APO…)."""
         self.fx_list.set_texts(add_label, hint)
         self.fx_badge.set_tooltips(chain_on_tip, chain_off_tip)
+
+    def set_fx_abilities(self, movable: bool, measurable: bool) -> None:
+        self.fx_list.set_abilities(movable, measurable)
+
+    def set_fx_costs(self, costs: list[str]) -> None:
+        self.fx_list.set_costs(costs)
+
+    def fx_names(self) -> list[str]:
+        return [fx.display_name for fx in self._track.fx] if self._track is not None else []
 
     def set_fx_hint(self, hint: str) -> None:
         self.fx_list.set_hint(hint)

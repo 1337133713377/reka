@@ -284,10 +284,26 @@ def parse_settings(text: str) -> dict[tuple[str, str, int], str]:
     return settings
 
 
+def plugin_keys(chain: ApoChain, endpoints: list[Endpoint]) -> list[tuple[str, str, int]]:
+    """Clé des réglages de chaque plugin d'une chaîne, comme parse_settings() :
+    (motif du périphérique, bibliothèque, n-ième occurrence)."""
+    pattern = resolve_device(chain.device, endpoints)[0].lower()
+    seen: dict[str, int] = {}
+    keys = []
+    for plugin in chain.plugins:
+        library = _library_key(plugin.path)
+        keys.append((pattern, library, seen.get(library, 0)))
+        seen[library] = seen.get(library, 0) + 1
+    return keys
+
+
 def render(chains: list[ApoChain | None], names: list[str], endpoints: list[Endpoint],
-           previous: str = "") -> str:
-    """Contenu de reka.txt pour les chaînes des strips."""
+           previous: str = "", overrides: dict[tuple[str, str, int], str] | None = None) -> str:
+    """Contenu de reka.txt pour les chaînes des strips. `overrides` : réglages à
+    écrire pour certaines clés à la place de ceux de `previous` (plugin déplacé)."""
     settings = parse_settings(previous)
+    if overrides:
+        settings = {key: value for key, value in {**settings, **overrides}.items() if value}
     lines = [HEADER.rstrip("\n")]
     for index, chain in enumerate(chains):
         if chain is None or not chain.plugins:
@@ -360,6 +376,7 @@ def default_devices(cfg: dict) -> list[str]:
 class ApoController(EffectsHost):
     kind = HOST_APO
     manages_fx = True
+    can_move_fx = True
 
     def __init__(self, cfg: dict, parent: QObject | None = None,
                  endpoints: list[Endpoint] | None = None) -> None:
@@ -434,6 +451,28 @@ class ApoController(EffectsHost):
             del plugins[fx_index]
             self._changed()
 
+    def move_fx(self, src_strip: int, src_index: int, dst_strip: int, dst_index: int,
+                copy: bool = False) -> None:
+        if not (0 <= src_strip < len(self._chains) and 0 <= dst_strip < len(self._chains)):
+            return
+        source, target = self._chains[src_strip], self._chains[dst_strip]
+        if not 0 <= src_index < len(source.plugins):
+            return
+        if not target.device:
+            self.command_failed.emit("Choisis d'abord le périphérique Windows de cette strip "
+                                     "(⚙ → Audio).")
+            return
+        # Réglages de chaque plugin (ChunkData) relevés avant : ils le suivent
+        saved = self._plugin_settings()
+        plugin = source.plugins[src_index]
+        if copy:
+            plugin = ApoPlugin(plugin.path, plugin.enabled)
+            saved[id(plugin)] = saved.get(id(source.plugins[src_index]), "")
+        else:
+            del source.plugins[src_index]
+        target.plugins.insert(max(0, min(dst_index, len(target.plugins))), plugin)
+        self._changed(saved)
+
     def set_fx_enabled(self, strip: int, fx_index: int, enabled: bool) -> None:
         plugins = self._chains[strip].plugins
         if 0 <= fx_index < len(plugins):
@@ -470,23 +509,42 @@ class ApoController(EffectsHost):
         names = list(self._cfg.get("ui", {}).get("strip_names", []))
         return names + [f"Strip {i + 1}" for i in range(len(names), self._count)]
 
-    def _changed(self) -> None:
+    def _plugin_settings(self) -> dict[int, str]:
+        """Réglages écrits dans reka.txt pour chaque plugin (par identité d'objet)."""
+        if self._config_dir is None:
+            return {}
+        path = self._config_dir / REKA_FILE
+        try:
+            previous = path.read_text(encoding="utf-8-sig", errors="replace") if path.is_file() else ""
+        except OSError:
+            return {}
+        settings = parse_settings(previous)
+        return {id(plugin): settings.get(key, "")
+                for chain in self._chains
+                for plugin, key in zip(chain.plugins, plugin_keys(chain, self.endpoints()))}
+
+    def _changed(self, saved: dict[int, str] | None = None) -> None:
         self._cfg.setdefault("apo", {})["strips"] = [
             {"device": c.device, "enabled": c.enabled,
              "plugins": [{"path": p.path, "enabled": p.enabled} for p in c.plugins]}
             for c in self._chains]
-        self._write()
+        self._write(saved)
         self.tracks_changed.emit(self.strip_tracks)
 
-    def _write(self) -> None:
+    def _write(self, saved: dict[int, str] | None = None) -> None:
         if self._config_dir is None:
             self.command_failed.emit("Equalizer APO est introuvable : installe-le, ou indique son "
                                      "dossier de configuration dans les réglages.")
             return
         path = self._config_dir / REKA_FILE
+        overrides = None
+        if saved is not None:     # plugin déplacé : chaque plugin garde ses réglages à sa nouvelle place
+            overrides = {key: saved.get(id(plugin), "")
+                         for chain in self._chains
+                         for plugin, key in zip(chain.plugins, plugin_keys(chain, self.endpoints()))}
         try:
             previous = path.read_text(encoding="utf-8-sig", errors="replace") if path.is_file() else ""
-            text = render(self._chains, self._names(), self.endpoints(), previous)
+            text = render(self._chains, self._names(), self.endpoints(), previous, overrides)
             if text != previous:
                 path.write_text(text, encoding="utf-8")
             ensure_include(self._config_dir)

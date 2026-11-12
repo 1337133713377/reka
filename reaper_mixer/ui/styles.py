@@ -18,6 +18,7 @@ un seul canal ; sinon il suit le thème. Voir element_color().
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass, field
 
 from PySide6.QtGui import QColor, QFont, QFontDatabase, QPalette
 from PySide6.QtWidgets import QApplication
@@ -313,10 +314,9 @@ def _rotate(value: str, hue_shift: float, saturation: float) -> str:
     return QColor.fromHslF((h + hue_shift) % 1.0, max(0.0, min(1.0, s * saturation)), l).name()
 
 
-def set_theme(theme: str | None) -> str:
-    """Recolore la palette d'après le thème ; renvoie le thème appliqué (le
-    thème par défaut si `theme` est inconnu). Appeler ensuite refresh()."""
-    global _current_theme
+def theme_palette(theme: str | None) -> tuple[str, dict[str, str]]:
+    """(thème retenu, couleurs de sa palette) sans l'appliquer : le thème par
+    défaut si `theme` est inconnu. Sert aussi aux aperçus des thèmes prédéfinis."""
     accent = theme_accent(theme)
     if accent is None:
         theme, accent = DEFAULT_THEME, QColor(THEMES[DEFAULT_THEME][1])
@@ -341,9 +341,106 @@ def set_theme(theme: str | None) -> str:
         values["GREEN_BRIGHT"] = _mix(accent, QColor("#ffffff"), HOVER_TOWARD_WHITE).name()
         if contrast(accent, QColor(values["ON_ACCENT"])) < 4.5:   # « FX » du badge allumé
             values["ON_ACCENT"] = values["ON_ACCENT_DARK"]
+    return theme, values
+
+
+def set_theme(theme: str | None) -> str:
+    """Recolore la palette d'après le thème ; renvoie le thème appliqué (le
+    thème par défaut si `theme` est inconnu). Appeler ensuite refresh()."""
+    global _current_theme
+    theme, values = theme_palette(theme)
     globals().update(values)
     _current_theme = theme
     return theme
+
+
+# --- Thèmes prédéfinis --------------------------------------------------------
+# Un thème prédéfini règle d'un coup la couleur d'accent (ui.theme), les couleurs
+# par élément (ui.colors) et le style des faders et des VU-mètres. L'arrière-plan,
+# la police et l'opacité des panneaux ne sont pas touchés.
+@dataclass(frozen=True)
+class Preset:
+    key: str
+    name: str
+    description: str
+    theme: str                                   # clé de THEMES ou « #rrggbb »
+    colors: dict[str, str] = field(default_factory=dict)
+    fader_style: str = DEFAULT_FADER_STYLE
+    vu_style: str = DEFAULT_VU_STYLE
+
+    def swatches(self) -> list[str]:
+        """Couleurs qui résument le thème (aperçu) : l'accent puis ses couleurs propres."""
+        colors = [theme_palette(self.theme)[1]["GREEN_NEON"]]
+        for value in self.colors.values():
+            if value.lower() not in (c.lower() for c in colors):
+                colors.append(value)
+        return colors[:5]
+
+
+_CHANNEL_COLORS = ("#22c55e", "#f59e0b", "#5865f2", "#06b6d4", "#ec4899", "#a855f7")
+PRESETS: dict[str, Preset] = {preset.key: preset for preset in (
+    Preset("studio", "Dark Studio Pro", "Sobre, gris-bleu, façon station audio.", "studio"),
+    Preset("neon", "Néon", "Le vert néon d'origine de REKA.", "neon"),
+    Preset("synthwave", "Synthwave", "Violet, rose et cyan, années 80.", "#b266ff",
+           {"send0": "#ff4fb8", "send1": "#00e5ff", "send2": "#b266ff", "send3": "#ffd23f",
+            "fader": "#ff4fb8", "vu": "#00e5ff", "fx_badge": "#ff4fb8",
+            "headphone": "#00e5ff", "engines": "#ff4fb8", "media": "#00e5ff"},
+           "rond", "continu"),
+    Preset("braise", "Braise", "Orange et rouge, chaleureux.", "orange",
+           {"fader": "#ff6a3d", "vu": "#ffb347", "fx_badge": "#ff6a3d", "headphone": "#ff6a3d",
+            "pad": "#ffd23f"},
+           "vintage", "led"),
+    Preset("glace", "Glace", "Cyan et blanc givré.", "cyan",
+           {"fader": "#e9f7ff", "name": "#e9f7ff", "headphone": "#e9f7ff", "vu": "#7dd3fc"},
+           "fin", "segments"),
+    Preset("matrix", "Matrix", "Noir et vert terminal.", "#39ff14",
+           {"name": "#7dff6a", "pad": "#39ff14"},
+           "fin", "led"),
+    Preset("ornoir", "Or noir", "Doré sur fond sombre.", "or",
+           {"name": "#ffe9a8", "fx_pill": "#ffd23f"},
+           "vintage", "continu"),
+    Preset("sakura", "Sakura", "Rose pastel et blanc.", "#ff8fc7",
+           {"fader": "#ffffff", "vu": "#ffb3d9", "name": "#ffe3f1", "headphone": "#ffffff"},
+           "rond", "segments"),
+    Preset("ocean", "Océan", "Bleus et turquoise.", "bleu",
+           {"send0": "#22d3ee", "send1": "#3d8bff", "send2": "#818cf8", "send3": "#2dd4bf",
+            "fader": "#3d8bff", "vu": "#22d3ee"},
+           "console", "continu"),
+    Preset("rubis", "Rubis", "Rouge profond ; le Muet passe à l'ambre pour rester visible.", "rouge",
+           {"mute": "#ffb020", "pad": "#ffffff"},
+           "console", "segments"),
+    Preset("arcade", "Arcade", "Une couleur par canal, pour s'y retrouver d'un coup d'œil.", "studio",
+           {f"{element}@{index}": value for index, value in enumerate(_CHANNEL_COLORS)
+            for element in ("fader", "name", "fx_badge", "apps")},
+           "console", "led"),
+    Preset("mono", "Monochrome", "Blanc et gris, sans couleur.", "blanc", {}, "fin", "continu"),
+)}
+
+
+def apply_preset(ui_cfg: dict, key: str) -> bool:
+    """Écrit un thème prédéfini dans la config `ui` (à appliquer ensuite comme
+    tout changement d'apparence) ; False si la clé est inconnue."""
+    preset = PRESETS.get(key)
+    if preset is None:
+        return False
+    ui_cfg["theme"] = preset.theme
+    ui_cfg["colors"] = dict(preset.colors)
+    ui_cfg["fader_style"] = preset.fader_style
+    ui_cfg["vu_style"] = preset.vu_style
+    return True
+
+
+def current_preset(ui_cfg: dict) -> str | None:
+    """Thème prédéfini que la config `ui` reproduit exactement, sinon None."""
+    theme = ui_cfg.get("theme", DEFAULT_THEME)
+    colors = _valid_colors(ui_cfg.get("colors"))
+    fader = ui_cfg.get("fader_style") or DEFAULT_FADER_STYLE
+    vu = ui_cfg.get("vu_style") or DEFAULT_VU_STYLE
+    for preset in PRESETS.values():
+        if ((preset.theme, preset.fader_style, preset.vu_style) == (theme, fader, vu)
+                and _valid_colors(preset.colors) == colors):
+            return preset.key
+    return None
 
 
 def current_theme() -> str:

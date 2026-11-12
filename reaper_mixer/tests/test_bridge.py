@@ -81,6 +81,24 @@ def test_bridge_end_to_end(qapp, cfg, tmp_path):
         assert wait_for(lambda: events["tracks"][-1][2] is not None
                         and events["tracks"][-1][2].name == "Appels"
                         and events["tracks"][-1][2].fx[0].display_name == "Volume Adjustment")
+        # Glisser-déposer : ReaLimit du micro vers Appels (en tête de chaîne)
+        ctrl.move_fx(0, 1, 2, 0)
+        assert wait_for(lambda: [f.display_name for f in events["tracks"][-1][2].fx] ==
+                        ["ReaLimit (Cockos)", "Volume Adjustment"]
+                        and [f.display_name for f in events["tracks"][-1][0].fx] ==
+                        ["Pro-Q 4 (FabFilter)"]), events["fail"]
+        assert events["tracks"][-1][2].fx[0].latency == 120      # le plugin lui-même a suivi
+        ctrl.move_fx(2, 0, 2, 1)                 # dans sa chaîne : passe après Volume Adjustment
+        assert wait_for(lambda: [f.display_name for f in events["tracks"][-1][2].fx] ==
+                        ["Volume Adjustment", "ReaLimit (Cockos)"])
+        ctrl.move_fx(2, 1, 0, 1, copy=True)      # copie vers le micro : l'original reste
+        assert wait_for(lambda: [f.display_name for f in events["tracks"][-1][0].fx] ==
+                        ["Pro-Q 4 (FabFilter)", "ReaLimit (Cockos)"]
+                        and len(events["tracks"][-1][2].fx) == 2)
+        ctrl.remove_fx(2, 1)
+        assert wait_for(lambda: [f.display_name for f in events["tracks"][-1][2].fx] ==
+                        ["Volume Adjustment"])
+        assert not events["fail"]
         # Plugin inconnu → erreur remontée
         ctrl.add_fx(1, "VST3: Plugin\tqui n'existe pas")
         assert wait_for(lambda: events["fail"]) and "n'existe pas" in events["fail"][0]

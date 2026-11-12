@@ -228,6 +228,7 @@ class ReaperController(EffectsHost):
     kind = HOST_REAPER
     process_key = "reaper"
     manages_fx = True
+    can_move_fx = True
     has_projects = True
     has_audio_device = True
 
@@ -405,6 +406,15 @@ class ReaperController(EffectsHost):
 
     def remove_fx(self, strip: int, fx_index: int) -> None:
         self._send("remove_fx", self._channels[strip], fx_index)
+
+    def move_fx(self, src_strip: int, src_index: int, dst_strip: int, dst_index: int,
+                copy: bool = False) -> None:
+        """Déplace (ou copie) un plugin, avec ses réglages. `dst_index` : place
+        d'arrivée dans la chaîne cible. La piste de la strip cible est créée si
+        besoin, comme pour add_fx."""
+        create = bool(self._cfg.get("reaper", {}).get("manage_routing", True))
+        self._send("move_fx", self._channels[src_strip], src_index, self._channels[dst_strip],
+                   self._strip_name(dst_strip), int(create), dst_index, int(copy))
 
     def set_fx_enabled(self, strip: int, fx_index: int, enabled: bool) -> None:
         self._send("fx_enabled", self._channels[strip], fx_index, int(enabled))

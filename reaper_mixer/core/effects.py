@@ -95,6 +95,7 @@ class EffectsHost(QObject):
     kind = HOST_NONE
     process_key: str | None = None        # processus géré par ProcessManager
     manages_fx = False                    # liste / ajout / bypass / suppression de plugins
+    can_move_fx = False                   # plugins déplaçables d'une strip à l'autre
     has_projects = False                  # projets ouvrables depuis REKA (REAPER)
     has_audio_device = False              # carte son lisible (REAPER)
     add_label = "+ Ajouter un effet"      # texte de l'emplacement libre au survol
@@ -182,6 +183,10 @@ class EffectsHost(QObject):
 
     def remove_fx(self, strip: int, fx_index: int) -> None:
         pass
+
+    def move_fx(self, src_strip: int, src_index: int, dst_strip: int, dst_index: int,
+                copy: bool = False) -> None:
+        """Déplace (ou copie) un plugin vers la place `dst_index` de la strip cible."""
 
     def set_fx_enabled(self, strip: int, fx_index: int, enabled: bool) -> None:
         pass

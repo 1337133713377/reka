@@ -17,6 +17,7 @@ from pathlib import Path
 from PySide6.QtCore import QObject, QTimer, Signal
 
 from core.effects import HOST_REAPER, EffectsHost, samples_to_ms
+from core.engine_load import EngineLoad
 from core.reaper_ctrl import AudioDevice, FxInfo, TrackInfo, track_latency_samples
 from core.voicemeeter_ctrl import (DEFAULT_ROUTING, SILENCE_DB, AudioEndpoint, DeviceReport,
                                    MixerLevels, MixerParams, StripParams, clamp_pad, edition,
@@ -197,10 +198,48 @@ class DemoVoicemeeter(QObject):
         self.levels_changed.emit(self.levels_at(time.monotonic() - self._t0))
 
 
+class DemoLoad:
+    """Charge simulée du moteur d'effets : chaque plugin actif coûte un peu de
+    CPU (toujours la même part pour un plugin donné), le GPU varie doucement."""
+
+    IDLE_CORE = 6.0          # % d'un cœur, sans aucun plugin
+    CORES = 8
+
+    def __init__(self, host) -> None:
+        self._host = host
+        self._seconds = 0.0
+        self._last = time.monotonic()
+
+    @staticmethod
+    def plugin_cost(name: str) -> float:
+        """% d'un cœur pris par un plugin (1 à 9, stable d'un lancement à l'autre)."""
+        return 1.0 + sum(name.encode("utf-8")) % 9
+
+    def _core_percent(self) -> float:
+        return self.IDLE_CORE + sum(self.plugin_cost(fx.name)
+                                    for track in self._host.strip_tracks
+                                    if track is not None and track.fx_enabled
+                                    for fx in track.fx if fx.enabled)
+
+    def cpu_seconds(self) -> float:
+        now = time.monotonic()
+        self._seconds += (now - self._last) * self._core_percent() / 100.0
+        self._last = now
+        return self._seconds
+
+    def sample(self) -> EngineLoad:
+        self.cpu_seconds()
+        core = self._core_percent()
+        gpu = 7.0 + 5.0 * math.sin(time.monotonic() * 0.7)
+        return EngineLoad(cpu=round(core / self.CORES, 1), cpu_core=round(core, 1),
+                          gpu=round(gpu, 1), memory_mb=640.0)
+
+
 class DemoReaper(EffectsHost):
     kind = HOST_REAPER
     process_key = "reaper"
     manages_fx = True
+    can_move_fx = True
     has_projects = True
     has_audio_device = True
     # Attributs simples (et non les propriétés de EffectsHost) : modifiables en démo
@@ -278,6 +317,20 @@ class DemoReaper(EffectsHost):
         fx = list(self._tracks[strip].fx)
         del fx[fx_index]
         self._set(strip, fx=tuple(fx))
+
+    def move_fx(self, src_strip: int, src_index: int, dst_strip: int, dst_index: int,
+                copy: bool = False) -> None:
+        source = list(self._tracks[src_strip].fx)
+        if not 0 <= src_index < len(source):
+            return
+        fx = replace(source[src_index], open=False) if copy else source[src_index]
+        if not copy:
+            del source[src_index]
+        target = source if dst_strip == src_strip else list(self._tracks[dst_strip].fx)
+        target.insert(max(0, min(dst_index, len(target))), fx)
+        if dst_strip != src_strip:
+            self._tracks[src_strip] = replace(self._tracks[src_strip], fx=tuple(source))
+        self._set(dst_strip, fx=tuple(target))
 
     def set_fx_enabled(self, strip: int, fx_index: int, enabled: bool) -> None:
         fx = list(self._tracks[strip].fx)

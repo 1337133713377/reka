@@ -2,27 +2,53 @@
 Pill d'un plugin VST dans la section Effets d'un strip.
 
 Clic = ouvrir / fermer l'interface du plugin. Clic droit = menu (ouvrir,
-bypass, supprimer). Un plugin en bypass est grisé et barré ; un plugin dont
-l'interface est ouverte a une bordure verte.
+bypass, mesurer sa charge, supprimer). Glisser = déplacer le plugin dans la
+chaîne ou vers une autre strip (Ctrl maintenu : le copier). Un plugin en
+bypass est grisé et barré ; un plugin dont l'interface est ouverte a une
+bordure verte.
 """
 
 from __future__ import annotations
 
-from PySide6.QtCore import QRectF, Qt, Signal
-from PySide6.QtGui import QColor, QFont, QPainter, QPen
-from PySide6.QtWidgets import QMenu, QSizePolicy, QWidget
+from PySide6.QtCore import QMimeData, QRectF, Qt, Signal
+from PySide6.QtGui import QColor, QDrag, QFont, QPainter, QPen
+from PySide6.QtWidgets import QApplication, QMenu, QSizePolicy, QWidget
 
 from ui import styles
 
 PILL_HEIGHT = 16
 PADDING_X = 7
 SLOW_PLUGIN_MS = 3.0     # au-delà, point ambre : plugin qui retarde nettement le son
+FX_MIME = "application/x-reka-fx"    # « strip:index » du plugin glissé
+
+
+def encode_fx(strip: int, index: int) -> bytes:
+    return f"{strip}:{index}".encode("ascii")
+
+
+def decode_fx(mime: QMimeData) -> tuple[int, int] | None:
+    """(strip, index) du plugin glissé, None si ce n'est pas un plugin de REKA."""
+    if not mime.hasFormat(FX_MIME):
+        return None
+    try:
+        strip, index = bytes(mime.data(FX_MIME)).decode("ascii").split(":")
+        return int(strip), int(index)
+    except ValueError:
+        return None
+
+
+def format_cost(core_percent: float, cores: int) -> str:
+    """« ≈ 0,4 % du CPU (3 % d'un cœur) » pour une charge mesurée."""
+    machine = core_percent / max(1, cores)
+    return (f"≈ {machine:.1f} % du CPU ({core_percent:.0f} % d'un cœur)" if core_percent >= 0.5
+            else "négligeable (moins de 0,5 % d'un cœur)")
 
 
 class FxPill(QWidget):
     clicked = Signal()                 # ouvrir / fermer l'interface
     bypassRequested = Signal(bool)     # True = réactiver, False = bypass
     removeRequested = Signal()
+    measureRequested = Signal()        # mesurer la charge CPU du plugin
 
     def __init__(self, name: str, enabled: bool = True, is_open: bool = False,
                  parent: QWidget | None = None) -> None:
@@ -32,8 +58,14 @@ class FxPill(QWidget):
         self._open = is_open
         self._hover = False
         self._pressed = False
+        self._press_pos = None
         self._latency_ms: float | None = None
+        self._cost: str = ""                    # charge mesurée, en clair
         self.color_scope: int | None = None     # canal (couleur personnalisée)
+        self.strip = -1                         # strip et place dans la chaîne (glisser-déposer)
+        self.index = -1
+        self.draggable = False
+        self.measurable = False
         self.setFixedHeight(PILL_HEIGHT)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -51,6 +83,17 @@ class FxPill(QWidget):
             self._latency_ms = ms
             self._refresh_tooltip()
             self.update()
+
+    def set_cost(self, text: str) -> None:
+        """Charge CPU mesurée du plugin (texte), vide si elle n'a pas été mesurée."""
+        if text != self._cost:
+            self._cost = text
+            self._refresh_tooltip()
+
+    def set_abilities(self, draggable: bool, measurable: bool) -> None:
+        if (draggable, measurable) != (self.draggable, self.measurable):
+            self.draggable, self.measurable = draggable, measurable
+            self._refresh_tooltip()
 
     @property
     def name(self) -> str:
@@ -103,24 +146,56 @@ class FxPill(QWidget):
 
     def mousePressEvent(self, event) -> None:  # noqa: N802
         self._pressed = event.button() == Qt.MouseButton.LeftButton
+        self._press_pos = event.position().toPoint() if self._pressed else None
+
+    def mouseMoveEvent(self, event) -> None:  # noqa: N802
+        if (self._pressed and self.draggable and self._press_pos is not None
+                and (event.position().toPoint() - self._press_pos).manhattanLength()
+                >= QApplication.startDragDistance()):
+            self.start_drag()
+
+    def start_drag(self) -> None:
+        """Glisser le plugin : déposé sur une liste d'effets, il y est déplacé."""
+        hot_spot = self._press_pos or self.rect().center()
+        self._pressed, self._press_pos, self._hover = False, None, False
+        drag = QDrag(self)
+        drag.setMimeData(self.mime_data())
+        drag.setPixmap(self.grab())
+        drag.setHotSpot(hot_spot)
+        drag.exec(Qt.DropAction.MoveAction | Qt.DropAction.CopyAction, Qt.DropAction.MoveAction)
+        self.update()
+
+    def mime_data(self) -> QMimeData:
+        mime = QMimeData()
+        mime.setData(FX_MIME, encode_fx(self.strip, self.index))
+        return mime
 
     def mouseReleaseEvent(self, event) -> None:  # noqa: N802
         if (self._pressed and event.button() == Qt.MouseButton.LeftButton
                 and self.rect().contains(event.position().toPoint())):
             self.clicked.emit()
         self._pressed = False
+        self._press_pos = None
 
     def contextMenuEvent(self, event) -> None:  # noqa: N802
         menu = QMenu(self)
         open_action = menu.addAction("Fermer l'interface" if self._open else "Ouvrir l'interface")
         bypass_action = menu.addAction("Réactiver" if not self._enabled else "Désactiver (bypass)")
+        measure_action = None
+        if self.measurable:
+            measure_action = menu.addAction("Mesurer sa charge CPU")
+            measure_action.setEnabled(self._enabled)
         menu.addSeparator()
         remove_action = menu.addAction("Supprimer")
         chosen = menu.exec(event.globalPos())
+        if chosen is None:
+            return
         if chosen is open_action:
             self.clicked.emit()
         elif chosen is bypass_action:
             self.bypassRequested.emit(not self._enabled)
+        elif chosen is measure_action:
+            self.measureRequested.emit()
         elif chosen is remove_action:
             self.removeRequested.emit()
 
@@ -131,4 +206,7 @@ class FxPill(QWidget):
             latency = f"\nLatence : {self._latency_ms:.1f} ms"
             if self.slow:
                 latency += " (retarde nettement la voix : préfère un mode « zéro latence »)"
-        self.setToolTip(f"{self._name} — {state}{latency}\nClic : interface · Clic droit : options")
+        cost = f"\nCharge mesurée : {self._cost}" if self._cost else ""
+        drag = " · Glisser : déplacer (Ctrl : copier)" if self.draggable else ""
+        self.setToolTip(f"{self._name} — {state}{latency}{cost}\n"
+                        f"Clic : interface · Clic droit : options{drag}")

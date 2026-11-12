@@ -129,12 +129,7 @@ jobs:
           gh release create "$GITHUB_REF_NAME" dist/REKA.exe selftest/console.png \
             --verify-tag --latest \
             --title "REKA $GITHUB_REF_NAME" \
-            --notes "Télécharge **REKA.exe** et lance-le. Il faut Voicemeeter (Potato ou Banana) et, pour les effets, REAPER, FL Studio ou Equalizer APO.
-
-          Nouveau : choix du périphérique de chaque entrée et de chaque sortie dans ⚙ → Audio.
-          REKA se met ensuite à jour tout seul (pill « Mise à jour » du Master).
-          Pour voir la console sans rien installer : \`REKA.exe --demo\`.
-          REKA est développé par Regrettable et Zerka. Merci à 206 pour sa contribution."
+            --notes-file NOUVEAUTES.md
       - name: Release « build-<branche> »
         if: github.event_name == 'push' && github.ref_type == 'branch'
         env:

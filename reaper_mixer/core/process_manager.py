@@ -571,6 +571,11 @@ class ProcessManager:
         managed = self._get(key)
         return managed is not None and managed.is_alive()
 
+    def process(self, key: str) -> psutil.Process | None:
+        """Processus d'un moteur (mesure de sa charge), None s'il ne tourne pas."""
+        managed = self._get(key)
+        return managed.process if managed is not None and managed.is_alive() else None
+
     def will_terminate(self, key: str) -> bool:
         """True si shutdown() arrêtera ce processus : les contrôleurs peuvent
         alors demander un arrêt propre au moteur avant (sauvegarde, etc.).

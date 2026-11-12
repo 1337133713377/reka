@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any
 
 APP_NAME = "REKA"
-APP_VERSION = "0.6.0"
+APP_VERSION = "0.7.0"
 APP_AUTHORS = "Regrettable et Zerka"   # développeurs
 APP_THANKS = "206"                     # remerciements pour sa contribution
 CONFIG_FILENAME = "config.json"

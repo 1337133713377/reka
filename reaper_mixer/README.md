@@ -68,7 +68,8 @@ sur son insert (désactivable dans ⚙ → Options).
 | Bouton Apps (strips virtuelles) | volume, mute et niveau de chaque application qui joue sur la strip |
 | Pill « Mise à jour » (Master) | apparaît quand une nouvelle version est en ligne ; clic pour l'installer |
 | Muet | coupe la strip |
-| Pill d'effet | clic = ouvrir/fermer l'interface du plugin, clic droit = bypass / supprimer ; point ambre = plugin qui retarde la voix |
+| Pill d'effet | clic = ouvrir/fermer l'interface du plugin, clic droit = bypass / mesurer sa charge CPU / supprimer ; **glisser** = le déplacer dans la chaîne ou vers une autre strip (Ctrl = copier) ; point ambre = plugin qui retarde la voix |
+| Jauges CPU / GPU (Master) | charge du moteur d'effets et de tous ses plugins ; ambre puis rouge quand elle monte ; survol = détail (cœur, mémoire) |
 | Emplacement vide (« + ») | ajouter un effet (REAPER, Equalizer APO) ; FL Studio : l'afficher |
 | Badge FX ⏻ | bypass de toute la chaîne d'effets de la strip (FL Studio : envoi à l'insert) |
 | Nom de la strip | double-clic ou clic droit pour renommer (renomme aussi la piste REAPER) ; tous les noms : ⚙ → Canaux |
@@ -120,6 +121,34 @@ périphérique est proposé par pilote : **WDM** (le plus rapide), **MME** (le p
 compatible), **KS** et **ASIO** (ASIO en sortie : sur A1 seulement). *Aucun périphérique*
 libère l'entrée ou la sortie ; *Actualiser la liste* après avoir branché un appareil. Le
 changement est immédiat et Voicemeeter le retient.
+
+## Déplacer un effet à la souris
+
+Attrape la pill d'un plugin et dépose-la où tu veux : plus haut ou plus bas dans sa chaîne
+(l'ordre des effets change le son), ou sur la liste d'effets d'une **autre strip**. Un trait
+montre où il sera inséré. Le plugin est déplacé **avec ses réglages** ; maintiens **Ctrl** en
+déposant pour le copier au lieu de le déplacer.
+
+- **REAPER** : si la strip d'arrivée n'a pas encore de piste, elle est créée comme à l'ajout
+  d'un effet (désactivable dans ⚙ → Options).
+- **Equalizer APO** : la strip d'arrivée doit avoir son périphérique Windows (⚙ → Audio) ; les
+  réglages faits dans l'éditeur d'Equalizer APO suivent le plugin.
+- **FL Studio** : les effets se rangent dans FL Studio lui-même.
+
+## Charge CPU et GPU des effets
+
+Le Master affiche deux jauges : le **CPU** et le **GPU** utilisés par le moteur d'effets et
+tous ses plugins (REAPER et ses plugins pontés, FL Studio, ou le moteur audio de Windows pour
+Equalizer APO). Elles passent à l'ambre puis au rouge quand la charge monte ; au survol :
+part d'un seul cœur, mémoire, nombre de processus. Le GPU est celui que montre le
+Gestionnaire des tâches (interfaces de plugins accélérées, analyseurs…) ; la jauge n'apparaît
+que si Windows le fournit. On les masque dans ⚙ → Apparence → *Afficher la charge CPU / GPU*.
+
+REAPER ne donne pas la charge plugin par plugin à ses scripts. Pour un plugin précis : **clic
+droit sur l'effet → Mesurer sa charge CPU**. REKA mesure le moteur avec le plugin, puis sans
+(il est désactivé environ 3 secondes, puis réactivé) et affiche la différence, rappelée
+ensuite au survol de la pill. Fais passer du son pendant la mesure : beaucoup de plugins ne
+consomment presque rien en silence. C'est une estimation, à ± 1 % près.
 
 ## Délai de la voix
 
@@ -189,6 +218,12 @@ en cours dans le Master*.
 
 ⚙ → onglet **Apparence** :
 
+- **Thèmes prédéfinis** : douze thèmes complets à appliquer d'un clic — Dark Studio Pro, Néon,
+  Synthwave, Braise, Glace, Matrix, Or noir, Sakura, Océan, Rubis, Arcade (une couleur par
+  canal) et Monochrome. Un thème règle la couleur d'accent, les couleurs de chaque élément et
+  le style des faders et des VU-mètres ; l'arrière-plan et la police sont conservés. Tu peux
+  ensuite tout retoucher ; si tu avais choisi des couleurs à la main, REKA demande
+  confirmation avant de les remplacer.
 - **Thème de couleur** : vert néon, cyan, bleu, violet, rose, rouge, orange, or, blanc, ou
   la pastille arc-en-ciel pour n'importe quelle couleur. Toute l'interface change tout de
   suite (knobs, VU-mètres, boutons, fonds teintés) ; le rouge du Muet et du petit cube
@@ -320,6 +355,7 @@ reaper_mixer/
 │   ├── voicemeeter_ctrl.py faders, mutes, routing, envois, insert, VU (30 Hz)
 │   ├── reaper_ctrl.py      liaison avec le pont Lua (effets, pistes, projet, carte son)
 │   ├── vst_scanner.py      liste des plugins (REAPER, cache, dossiers VST3)
+│   ├── engine_load.py      charge CPU / GPU / mémoire du moteur d'effets
 │   ├── media.py            musique en cours (contrôles média de Windows, WinRT)
 │   └── demo.py             moteurs simulés (--demo, --selftest)
 ├── ui/                     fenêtre, strips, master, knob/fader/VU dessinés, dialogues

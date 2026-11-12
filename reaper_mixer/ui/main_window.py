@@ -15,6 +15,7 @@ from __future__ import annotations
 import logging
 import os
 import sys
+import time
 from pathlib import Path
 
 from PySide6.QtCore import QByteArray, QEvent, QPointF, QProcess, QPropertyAnimation, Qt, QTimer
@@ -26,12 +27,14 @@ from shiboken6 import delete as delete_now
 from core import config
 from core.app_volume import AppVolumeBackend, NullAppVolumes
 from core.effects import HOST_APO, HOST_NONE, HOST_REAPER
+from core.engine_load import EngineLoadMonitor
 from core.media import MediaBackend, NullMedia
 from core.process_manager import is_blank_project, reaper_project
 from core.updater import UpdateChecker, UpdateInfo
 from core.voicemeeter_ctrl import DEFAULT_ROUTING, MixerLevels, MixerParams
 from ui import styles
 from ui.app_mixer import AppMixerPopup
+from ui.fx_pill import format_cost
 from ui.master_widget import MasterWidget
 from ui.project_dialog import ProjectDialog
 from ui.settings_dialog import SettingsDialog
@@ -56,6 +59,8 @@ APP_COUNT_MS = 2000           # nombre d'applications affiché sur les boutons �
 ENGINE_STATE_MS = 2000        # état des boutons Voicemeeter / REAPER (fenêtre affichée ?)
 ENGINE_NAMES = {"voicemeeter": "Voicemeeter", "reaper": "REAPER"}
 MEDIA_RESYNC_MS = 1500        # lecture / pause : état relu si l'application n'a pas réagi
+MEASURE_WINDOW_MS = 2500      # mesure d'un plugin : durée de chaque relevé (avec, puis sans)
+MEASURE_SETTLE_MS = 500       # … et pause après sa désactivation
 UPDATE_FIRST_CHECK_MS = 8000  # première vérification des mises à jour après l'ouverture
 DEFAULT_UPDATE_HOURS = 6
 
@@ -196,9 +201,14 @@ class Toast(QLabel):
 class MainWindow(QMainWindow):
     def __init__(self, cfg: dict, vm, reaper, processes, persist: bool = True,
                  apps: AppVolumeBackend | None = None, updater: UpdateChecker | None = None,
-                 media: MediaBackend | None = None, parent: QWidget | None = None) -> None:
+                 media: MediaBackend | None = None, load: EngineLoadMonitor | None = None,
+                 parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._cfg = cfg
+        self._load = load                # charge CPU / GPU du moteur d'effets (None : pas mesurée)
+        self._fx_costs: dict[str, float] = {}   # charge mesurée par plugin (% d'un cœur)
+        self._measuring = False
+        self._restore_measured = None    # réactive le plugin désactivé le temps d'une mesure
         self._persist = persist          # False en mode démo : la config n'est pas touchée
         self._vm = vm
         self._reaper = reaper
@@ -273,9 +283,13 @@ class MainWindow(QMainWindow):
         reaper.device_changed.connect(self._on_device)
         reaper.project_changed.connect(self._on_project)
         reaper.command_failed.connect(self.toast.show_message)
+        measurable = load is not None and load.can_measure and reaper.manages_fx
         for strip in self.strips:
             strip.configure_effects(reaper.add_label, reaper.strip_hint(strip.index),
                                     reaper.manages_fx, *self._chain_tooltips())
+            strip.set_fx_abilities(bool(getattr(reaper, "can_move_fx", False)), measurable)
+        if load is not None:
+            load.changed.connect(self._on_load)
 
         self._refresh_status()
         self._on_tracks(self._tracks)
@@ -336,6 +350,8 @@ class MainWindow(QMainWindow):
         strip.fxOpenRequested.connect(self._open_effect)
         strip.fxBypassRequested.connect(reaper.set_fx_enabled)
         strip.fxRemoveRequested.connect(self._remove_effect)
+        strip.fxMoveRequested.connect(self.move_effect)
+        strip.fxMeasureRequested.connect(self.measure_effect)
 
     # ------------------------------------------------------- moteurs → UI
     def _on_params(self, params: MixerParams) -> None:
@@ -374,6 +390,7 @@ class MainWindow(QMainWindow):
             strip.set_latency(host.strip_latency_ms(strip.index),
                               [host.fx_latency_ms(strip.index, i)
                                for i in range(len(track.fx) if track is not None else 0)])
+        self._show_fx_costs()
         self.update_inserts()
 
     def _on_vm_connection(self, ok: bool) -> None:
@@ -601,6 +618,126 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(FOCUS_PLUGIN_DELAY_MS, self,
                               lambda: self._processes.focus_window("reaper", name))
 
+    def move_effect(self, src_strip: int, src_fx: int, dst_strip: int, gap: int,
+                    copy: bool = False) -> None:
+        """Plugin glissé à la souris : `gap` est la place d'insertion dans la
+        liste de la strip d'arrivée (0 = avant le premier plugin)."""
+        host = self._reaper
+        if not getattr(host, "can_move_fx", False):
+            return
+        if not (0 <= src_strip < len(self.strips) and 0 <= dst_strip < len(self.strips)):
+            return
+        name = self.strips[src_strip].fx_name(src_fx)
+        if not name:
+            return                  # la chaîne a changé pendant le glisser
+        target = gap
+        if src_strip == dst_strip and not copy:
+            target = gap if gap <= src_fx else gap - 1    # place une fois le plugin retiré
+            if target == src_fx:
+                return
+        log.info("%s de « %s » : %s → %s (place %d)", "Copie" if copy else "Déplacement", name,
+                 self.strips[src_strip].strip_name(), self.strips[dst_strip].strip_name(), target)
+        host.move_fx(src_strip, src_fx, dst_strip, target, copy)
+        if src_strip != dst_strip:
+            self.toast.show_message(
+                f"« {name} » {'copié' if copy else 'déplacé'} sur "
+                f"« {self.strips[dst_strip].strip_name()} », avec ses réglages.")
+
+    # --------------------------------------------- charge CPU / GPU des effets
+    def _on_load(self, load) -> None:
+        show = bool(self._cfg.get("ui", {}).get("show_load", True))
+        self.master.set_load(load, self._engine_label(), show)
+
+    def _engine_label(self) -> str:
+        return "Windows (Equalizer APO)" if self._reaper.kind == HOST_APO else self._reaper.label
+
+    def _update_load(self) -> None:
+        """Jauges du Master : mesure lancée si l'option est active (réglages → Apparence)."""
+        if self._load is None:
+            self.master.set_load(None)
+            return
+        if bool(self._cfg.get("ui", {}).get("show_load", True)):
+            self._load.start()
+            self._on_load(self._load.latest)
+        else:
+            self._load.stop()
+            self.master.set_load(None)
+
+    def _show_fx_costs(self) -> None:
+        cores = os.cpu_count() or 1
+        for strip in self.strips:
+            strip.set_fx_costs([format_cost(self._fx_costs[name], cores) if name in self._fx_costs
+                                else "" for name in strip.fx_names()])
+
+    def measure_effect(self, index: int, fx_index: int) -> None:
+        """Charge CPU d'un plugin, par différence : le moteur est mesuré avec le
+        plugin, puis sans (il est désactivé quelques secondes), et il est réactivé.
+        REAPER ne donne pas cette charge directement."""
+        load, host = self._load, self._reaper
+        track = self._tracks[index] if 0 <= index < len(self._tracks) else None
+        if load is None or not load.can_measure or track is None or not 0 <= fx_index < len(track.fx):
+            return
+        if self._measuring:
+            self.toast.show_message("Une mesure est déjà en cours.")
+            return
+        fx = track.fx[fx_index]
+        name = fx.display_name
+        if not fx.enabled or not track.fx_enabled:
+            self.toast.show_message(f"Active « {name} » (et la chaîne d'effets) pour le mesurer.")
+            return
+        first = load.cpu_seconds()
+        if first is None:
+            self.toast.show_message(f"{self._engine_label()} ne tourne pas : mesure impossible.")
+            return
+        self._measuring = True
+        started = time.monotonic()
+        self.toast.show_message(f"Mesure de « {name} »… Il est désactivé quelques secondes ; "
+                                "fais passer du son pendant la mesure.")
+
+        def still_there() -> bool:
+            current = self._tracks[index] if index < len(self._tracks) else None
+            return (current is not None and fx_index < len(current.fx)
+                    and current.fx[fx_index].display_name == name)
+
+        def bypass() -> None:
+            with_plugin = self._rate(first, started)
+            if not still_there() or with_plugin is None:
+                finish(None, None)
+                return
+            host.set_fx_enabled(index, fx_index, False)
+            # REKA fermée pendant la mesure : le plugin ne doit pas rester désactivé
+            self._restore_measured = lambda: host.set_fx_enabled(index, fx_index, True)
+            QTimer.singleShot(MEASURE_SETTLE_MS, self, lambda: without(with_plugin))
+
+        def without(with_plugin: float) -> None:
+            second, restarted = load.cpu_seconds(), time.monotonic()
+            QTimer.singleShot(MEASURE_WINDOW_MS, self,
+                              lambda: finish(with_plugin, self._rate(second, restarted)))
+
+        def finish(with_plugin: float | None, bypassed: float | None) -> None:
+            self._measuring = False
+            self._restore_measured = None
+            if still_there():
+                host.set_fx_enabled(index, fx_index, True)
+            if with_plugin is None or bypassed is None:
+                self.toast.show_message(f"Mesure de « {name} » interrompue.")
+                return
+            cost = max(0.0, with_plugin - bypassed)
+            self._fx_costs[name] = cost
+            self._show_fx_costs()
+            log.info("Charge mesurée de %s : %.1f %% d'un cœur", name, cost)
+            self.toast.show_message(f"« {name} » : {format_cost(cost, os.cpu_count() or 1)}.")
+
+        QTimer.singleShot(MEASURE_WINDOW_MS, self, bypass)
+
+    def _rate(self, start: float | None, since: float) -> float | None:
+        """Charge moyenne du moteur depuis `since`, en % d'un cœur."""
+        end = self._load.cpu_seconds() if self._load is not None else None
+        elapsed = time.monotonic() - since
+        if start is None or end is None or elapsed <= 0:
+            return None
+        return 100.0 * (end - start) / elapsed
+
     def _remove_effect(self, index: int, fx_index: int) -> None:
         name = self.strips[index].fx_name(fx_index) or "cet effet"
         answer = QMessageBox.question(
@@ -654,6 +791,7 @@ class MainWindow(QMainWindow):
             strip.apply_colors()
         self.master.apply_colors()
         self._update_media()
+        self._update_load()
         if theme_changed:
             # Widgets dessinés à la main : ils relisent la palette en se redessinant
             self.toast.refresh_style()
@@ -811,6 +949,9 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------ fermeture
     def closeEvent(self, event) -> None:  # noqa: N802
+        if self._restore_measured is not None:    # mesure en cours : plugin réactivé
+            self._restore_measured()
+            self._restore_measured = None
         if self._params is not None:
             state = self._params.to_state()
             if not getattr(self._vm, "supports_sends", True):
@@ -827,6 +968,8 @@ class MainWindow(QMainWindow):
             ui_cfg.pop(legacy, None)
         self._save_config()
         self._media.stop()
+        if self._load is not None:
+            self._load.stop()
         if self._tray is not None:
             self._tray.hide()
         super().closeEvent(event)

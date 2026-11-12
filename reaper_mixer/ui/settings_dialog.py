@@ -19,11 +19,12 @@ import logging
 import shutil
 from pathlib import Path
 
-from PySide6.QtCore import QPointF, Qt, QUrl, Signal
-from PySide6.QtGui import QColor, QConicalGradient, QDesktopServices, QPainter, QPen, QPixmap
+from PySide6.QtCore import QPointF, QRectF, Qt, QUrl, Signal
+from PySide6.QtGui import (QColor, QConicalGradient, QDesktopServices, QFont, QPainter, QPen,
+                           QPixmap)
 from PySide6.QtWidgets import (QAbstractButton, QButtonGroup, QCheckBox, QColorDialog, QDialog,
-                               QComboBox, QFileDialog, QFontComboBox, QFormLayout, QGroupBox,
-                               QFrame, QHBoxLayout, QLabel, QScrollArea,
+                               QComboBox, QFileDialog, QFontComboBox, QFormLayout, QGridLayout,
+                               QGroupBox, QFrame, QHBoxLayout, QLabel, QMessageBox, QScrollArea,
                                QLineEdit, QPushButton, QRadioButton, QSlider, QTabWidget,
                                QVBoxLayout, QWidget)
 
@@ -38,6 +39,7 @@ log = logging.getLogger(__name__)
 
 IMAGE_FILTER = "Images (*.png *.jpg *.jpeg *.bmp *.webp *.gif)"
 BACKGROUND_STEM = "background"
+PRESET_COLUMNS = 3            # cartes de thèmes prédéfinis par ligne
 
 
 def project_label(path: str) -> str:
@@ -125,6 +127,53 @@ class ColorButton(QAbstractButton):
         super().leaveEvent(event)
 
 
+class PresetCard(QAbstractButton):
+    """Aperçu cliquable d'un thème prédéfini : son fond, son nom et ses couleurs."""
+
+    HEIGHT = 54
+
+    def __init__(self, preset: styles.Preset, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.preset = preset
+        self._palette = styles.theme_palette(preset.theme)[1]
+        self._swatches = preset.swatches()
+        self.setCheckable(True)
+        self.setFixedHeight(self.HEIGHT)
+        self.setMinimumWidth(150)
+        self.setToolTip(f"{preset.name} — {preset.description}")
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+    def paintEvent(self, _event) -> None:  # noqa: N802
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        palette = self._palette
+        rect = QRectF(1, 1, self.width() - 2, self.height() - 2)
+        accent = QColor(palette["GREEN_NEON"])
+        if self.isChecked():
+            p.setPen(QPen(accent, 2))
+        else:
+            p.setPen(QPen(QColor(styles.TEXT_SECONDARY if self.underMouse()
+                                 else palette["BORDER_COLUMN"]), 1))
+        p.setBrush(QColor(palette["BG_COLUMN"]))
+        p.drawRoundedRect(rect, 9, 9)
+        p.setPen(QColor(palette["TEXT_PRIMARY"]))
+        p.setFont(styles.font(11, QFont.Weight.DemiBold))
+        p.drawText(QRectF(11, 7, self.width() - 22, 16),
+                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, self.preset.name)
+        p.setPen(Qt.PenStyle.NoPen)
+        for n, value in enumerate(self._swatches):
+            p.setBrush(QColor(value))
+            p.drawRoundedRect(QRectF(11 + n * 19, 31, 15, 11), 3, 3)
+
+    def enterEvent(self, event) -> None:  # noqa: N802
+        self.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event) -> None:  # noqa: N802
+        self.update()
+        super().leaveEvent(event)
+
+
 def _hint(text: str) -> QLabel:
     label = QLabel(text)
     label.setObjectName("hint")
@@ -193,8 +242,8 @@ class SettingsDialog(QDialog):
         devices = [self._devices_group()] if self._has_devices else []
         self.tabs.addTab(self._tab(*devices, *([audio()] if audio else []), self._latency_group(),
                                    self._options_group()), "Audio")
-        self.tabs.addTab(self._tab(self._theme_group(), self._widgets_group(), self._background_group(),
-                                   self._window_group()), "Apparence")
+        self.tabs.addTab(self._tab(self._presets_group(), self._theme_group(), self._widgets_group(),
+                                   self._background_group(), self._window_group()), "Apparence")
         self.tabs.addTab(self._tab(self._colors_group()), "Couleurs")
         self.tabs.addTab(self._about_tab(), "À propos")
         layout.addWidget(self.tabs, 1)
@@ -219,6 +268,7 @@ class SettingsDialog(QDialog):
         self._show_edition()
         self._show_latency()
         self._show_background()
+        self._show_preset()
         if self._has_devices:
             vm.devices_changed.connect(self._show_devices)
             vm.request_devices()
@@ -532,6 +582,59 @@ class SettingsDialog(QDialog):
         return group
 
     # ---------------------------------------------------------- Apparence
+    def _presets_group(self) -> QGroupBox:
+        group = QGroupBox("Thèmes prédéfinis")
+        box = QVBoxLayout(group)
+        grid = QGridLayout()
+        grid.setSpacing(8)
+        self.preset_cards: dict[str, PresetCard] = {}
+        for n, preset in enumerate(styles.PRESETS.values()):
+            card = PresetCard(preset)
+            card.clicked.connect(lambda _checked=False, key=preset.key: self.apply_preset(key))
+            self.preset_cards[preset.key] = card
+            grid.addWidget(card, n // PRESET_COLUMNS, n % PRESET_COLUMNS)
+        box.addLayout(grid)
+        self.preset_label = _hint("")
+        box.addWidget(self.preset_label)
+        return group
+
+    def apply_preset(self, key: str, confirm: bool = True) -> bool:
+        """Applique un thème prédéfini tout de suite : accent, couleurs de chaque
+        élément, style des faders et des VU-mètres."""
+        ui_cfg = self._cfg.setdefault("ui", {})
+        if key not in styles.PRESETS:
+            return False
+        custom = bool(ui_cfg.get("colors")) and styles.current_preset(ui_cfg) is None
+        if confirm and custom and QMessageBox.question(
+                self, "Thème prédéfini",
+                f"Appliquer « {styles.PRESETS[key].name} » remplace les couleurs que tu as "
+                "choisies dans l'onglet Couleurs. Continuer ?") != QMessageBox.StandardButton.Yes:
+            self._show_preset()
+            return False
+        styles.apply_preset(ui_cfg, key)
+        self.appearanceChanged.emit()
+        self._show_theme()
+        self._show_preset()
+        for combo, value in ((self.fader_choice, ui_cfg["fader_style"]),
+                             (self.vu_choice, ui_cfg["vu_style"])):
+            combo.blockSignals(True)
+            combo.setCurrentIndex(max(0, combo.findData(value)))
+            combo.blockSignals(False)
+        self._refresh_colors()
+        return True
+
+    def _show_preset(self) -> None:
+        if not hasattr(self, "preset_cards"):
+            return
+        current = styles.current_preset(self._cfg.get("ui", {}))
+        for key, card in self.preset_cards.items():
+            card.setChecked(key == current)
+        self.preset_label.setText(
+            f"{styles.PRESETS[current].name} — {styles.PRESETS[current].description}" if current
+            else "Réglages personnalisés. Un thème règle la couleur d'accent, les couleurs de "
+                 "chaque élément et le style des faders et des VU-mètres ; l'arrière-plan et la "
+                 "police sont conservés.")
+
     def _theme_group(self) -> QGroupBox:
         group = QGroupBox("Thème de couleur")
         box = QVBoxLayout(group)
@@ -663,6 +766,13 @@ class SettingsDialog(QDialog):
         self.show_media.setChecked(bool(self._cfg.get("ui", {}).get("show_media", True)))
         self.show_media.toggled.connect(lambda on: self._set_ui("show_media", on))
         box.addWidget(self.show_media)
+        self.show_load = QCheckBox("Afficher la charge CPU / GPU du moteur d'effets dans le Master")
+        self.show_load.setChecked(bool(self._cfg.get("ui", {}).get("show_load", True)))
+        self.show_load.toggled.connect(lambda on: self._set_ui("show_load", on))
+        box.addWidget(self.show_load)
+        box.addWidget(_hint("C'est la charge de REAPER (ou FL Studio, ou du moteur audio de Windows "
+                            "pour Equalizer APO) avec tous ses plugins. Pour un plugin précis : clic "
+                            "droit sur l'effet → « Mesurer sa charge CPU »."))
         return group
 
     # ----------------------------------------------------------- Couleurs
@@ -769,11 +879,13 @@ class SettingsDialog(QDialog):
             colors[key] = QColor(value).name()
         self.appearanceChanged.emit()
         self._refresh_colors()
+        self._show_preset()
 
     def reset_element_colors(self) -> None:
         self._cfg.setdefault("ui", {})["colors"] = {}
         self.appearanceChanged.emit()
         self._refresh_colors()
+        self._show_preset()
 
     # ----------------------------------------------------------- À propos
     def _about_tab(self) -> QWidget:
@@ -929,6 +1041,7 @@ class SettingsDialog(QDialog):
     def _set_ui(self, key: str, value) -> None:
         self._cfg.setdefault("ui", {})[key] = value
         self.appearanceChanged.emit()
+        self._show_preset()
 
     def _on_edition(self, button, checked: bool) -> None:
         if checked:
