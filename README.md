@@ -18,7 +18,7 @@ Voicemeeter pour le son, tes plugins VST pour les effets, **une seule fenêtre**
 <br>
 
 <a href="https://github.com/1337133713377/reka/releases/latest/download/REKA.exe">
-  <img src="https://img.shields.io/badge/%E2%AC%87%20%20T%C3%A9l%C3%A9charger%20REKA.exe-ef4444?style=for-the-badge" alt="Télécharger REKA.exe" height="48">
+  <img src="https://img.shields.io/badge/%E2%AC%87%20%20T%C3%A9l%C3%A9charger%20REKA.exe-ef4444?style=for-the-badge" alt="Télécharger REKA.exe" width="330">
 </a>
 
 <sub>Un seul fichier, rien à installer · mises à jour automatiques</sub>
@@ -154,7 +154,7 @@ Synthwave, Matrix, Sakura, Braise… ou **ta couleur pour chaque élément** et 
 
 <table>
 <tr>
-<td width="44%">
+<td width="52%">
 <img src="docs/reglages-audio.png" alt="Réglages, onglet Audio : entrées et sorties">
 </td>
 <td valign="top">
@@ -205,14 +205,14 @@ Un clic dans ⚙ → **Apparence** et toute la console change : couleurs, faders
 
 <table>
 <tr>
-<td align="center"><img src="docs/theme-synthwave.png" alt="Thème Synthwave"><br><b>Synthwave</b></td>
-<td align="center"><img src="docs/theme-braise.png" alt="Thème Braise"><br><b>Braise</b></td>
-<td align="center"><img src="docs/theme-glace.png" alt="Thème Glace"><br><b>Glace</b></td>
+<td width="33%" align="center"><img src="docs/theme-synthwave.png" alt="Thème Synthwave"><br><b>Synthwave</b></td>
+<td width="33%" align="center"><img src="docs/theme-braise.png" alt="Thème Braise"><br><b>Braise</b></td>
+<td width="33%" align="center"><img src="docs/theme-glace.png" alt="Thème Glace"><br><b>Glace</b></td>
 </tr>
 <tr>
-<td align="center"><img src="docs/theme-matrix.png" alt="Thème Matrix"><br><b>Matrix</b></td>
-<td align="center"><img src="docs/theme-sakura.png" alt="Thème Sakura"><br><b>Sakura</b></td>
-<td align="center"><img src="docs/theme-arcade.png" alt="Thème Arcade"><br><b>Arcade</b> · une couleur par canal</td>
+<td width="33%" align="center"><img src="docs/theme-matrix.png" alt="Thème Matrix"><br><b>Matrix</b></td>
+<td width="33%" align="center"><img src="docs/theme-sakura.png" alt="Thème Sakura"><br><b>Sakura</b></td>
+<td width="33%" align="center"><img src="docs/theme-arcade.png" alt="Thème Arcade"><br><b>Arcade</b><br><sub>une couleur par canal</sub></td>
 </tr>
 </table>
 
