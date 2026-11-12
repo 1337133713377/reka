@@ -4,7 +4,9 @@ name: Build Windows
 
 on:
   push:
-    paths:
+    branches: ["**"]
+    tags: ["v*"]          # un tag « v0.6.0 » publie une release numérotée
+    paths:                # (ne filtre que les pushs de branches)
       - "reaper_mixer/**"
       - ".github/workflows/build-windows.yml"
   workflow_dispatch:
@@ -118,8 +120,23 @@ jobs:
             reaper_mixer/dist/REKA.exe
             reaper_mixer/dist/version.json
             reaper_mixer/selftest/
+      - name: Release numérotée (tag « v… »)
+        if: github.event_name == 'push' && github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete "$GITHUB_REF_NAME" --yes || true
+          gh release create "$GITHUB_REF_NAME" dist/REKA.exe selftest/console.png \
+            --verify-tag --latest \
+            --title "REKA $GITHUB_REF_NAME" \
+            --notes "Télécharge **REKA.exe** et lance-le. Il faut Voicemeeter (Potato ou Banana) et, pour les effets, REAPER, FL Studio ou Equalizer APO.
+
+          Nouveau : choix du périphérique de chaque entrée et de chaque sortie dans ⚙ → Audio.
+          REKA se met ensuite à jour tout seul (pill « Mise à jour » du Master).
+          Pour voir la console sans rien installer : \`REKA.exe --demo\`.
+          REKA est développé par Regrettable et Zerka. Merci à 206 pour sa contribution."
       - name: Release « build-<branche> »
-        if: github.event_name == 'push'
+        if: github.event_name == 'push' && github.ref_type == 'branch'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
