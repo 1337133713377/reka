@@ -583,6 +583,14 @@ class RekaHostController(EffectsHost):
         self._command({"cmd": "chain_enabled", "strip": strip, "enabled": bool(enabled)})
 
     def toggle_fx_ui(self, strip: int, fx_index: int) -> None:
+        # L'interface s'ouvre dans reka-host.exe : il a le droit de passer devant
+        pid = getattr(self._process, "pid", None)
+        if sys.platform == "win32" and pid:
+            try:
+                import ctypes
+                ctypes.windll.user32.AllowSetForegroundWindow(int(pid))
+            except (AttributeError, OSError):
+                pass
         self._command({"cmd": "toggle_ui", "strip": strip, "index": fx_index}, save=False)
 
     def save_project(self) -> None:

@@ -68,6 +68,9 @@ a = Analysis(
     datas=[
         ("config.json", "."),
         ("assets", "assets"),
+        # Moteur d'effets intégré (construit par le job « reka-host » : native/reka-host)
+        *([("engine/reka-host.exe", "engine")]
+          if os.path.isfile(os.path.join(SPECPATH, "engine", "reka-host.exe")) else []),
         # Numéro de build et release (écrit par le build GitHub) : mises à jour
         *([("build_info.json", ".")] if os.path.isfile(os.path.join(SPECPATH, "build_info.json")) else []),
     ],

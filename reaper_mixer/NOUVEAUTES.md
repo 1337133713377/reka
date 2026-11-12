@@ -2,6 +2,17 @@ Télécharge **REKA.exe** et lance-le. Il faut Voicemeeter (Potato ou Banana) et
 effets, REAPER, FL Studio ou Equalizer APO. REKA se met ensuite à jour toute seule (pill
 « Mise à jour » du Master). Pour voir la console sans rien installer : `REKA.exe --demo`.
 
+## Prochaine version
+
+- **Moteur d'effets intégré, sans REAPER** (optionnel) : choisis *REKA (intégré)* dans
+  ⚙ → Général → Effets. REKA charge lui-même tes plugins **VST2 et VST3** (64 bits) : ajout,
+  bypass, interface, déplacement et copie avec les réglages. Il se branche directement dans
+  Voicemeeter : pas de pilote ASIO à choisir, pas de tampon ajouté. Si un plugin plante, le
+  moteur redémarre tout seul avec tes chaînes.
+- **Chaînes d'effets dans le `.reka`** : avec le moteur intégré, l'export emporte chaque
+  chaîne et les réglages de chaque plugin. À l'import, REKA retrouve les plugins installés
+  ailleurs sur le disque, et garde les réglages de ceux qui manquent.
+
 ## 0.8.0
 
 - **Rich Presence Discord** : ton profil affiche « Joue à REKA », deux lignes de texte que tu
