@@ -675,7 +675,7 @@ def listen_for_show_requests(on_show: Callable[[], bool]) -> QLocalServer:
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog=config.APP_NAME, add_help=False)
     parser.add_argument("--demo", action="store_true")
-    parser.add_argument("--host", choices=("reaper", "flstudio", "apo", "none"))
+    parser.add_argument("--host", choices=("reaper", "reka", "flstudio", "apo", "none"))
     parser.add_argument("--setup", action="store_true")
     parser.add_argument("--selftest", metavar="IMAGE")
     parser.add_argument("--restart", action="store_true")  # relance depuis les réglages
@@ -691,6 +691,10 @@ def demo_host(cfg: dict, kind: str | None, processes) -> EffectsHost:
     if kind in (None, HOST_REAPER):
         return DemoReaper(cfg)
     cfg.setdefault("effects", {})["host"] = kind
+    if kind == "reka":
+        from core.reka_host import RekaHostController, demo_launcher
+        return RekaHostController(cfg, launcher=demo_launcher(),
+                                  chains_file=config.app_data_dir() / "chains-demo.json")
     if kind == "apo":
         demo_dir = config.app_data_dir() / "apo-demo"
         demo_dir.mkdir(parents=True, exist_ok=True)

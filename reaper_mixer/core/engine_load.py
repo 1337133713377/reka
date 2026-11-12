@@ -157,6 +157,10 @@ class GpuCounters:
 # --------------------------------------------------------------------------- #
 def engine_roots(processes, host) -> list[psutil.Process]:
     """Processus qui font tourner les plugins du moteur d'effets choisi."""
+    own = getattr(host, "engine_process", None)
+    if own is not None:                  # moteur REKA : reka-host.exe, lancé par REKA
+        proc = own()
+        return [proc] if proc is not None else []
     key = getattr(host, "process_key", None)
     if key:
         getter = getattr(processes, "process", None)
@@ -280,6 +284,6 @@ class EngineLoadMonitor(QObject):
 
 def create_monitor(processes, host) -> EngineLoadMonitor | None:
     """Moniteur du moteur d'effets en cours ; None sans moteur (Voicemeeter seul)."""
-    if not getattr(host, "process_key", None) and getattr(host, "kind", "") != "apo":
+    if not getattr(host, "process_key", None) and getattr(host, "kind", "") not in ("apo", "reka"):
         return None
     return EngineLoadMonitor(ProcessSampler(lambda: engine_roots(processes, host), GpuCounters()))

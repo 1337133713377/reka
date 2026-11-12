@@ -31,7 +31,7 @@ from core import backup, config
 from core.app_volume import AppVolumeBackend, NullAppVolumes
 from core.discord_rpc import (TOKEN_KEYS, DiscordBackend, DiscordSettings, DiscordStatus, MuteLink,
                               Presence, mute_direction, presence_from_config)
-from core.effects import HOST_APO, HOST_NONE, HOST_REAPER
+from core.effects import HOST_APO, HOST_NONE, HOST_REAPER, HOST_REKA
 from core.engine_load import EngineLoadMonitor
 from core.media import MediaBackend, NullMedia
 from core.process_manager import installed_voicemeeter_kinds, is_blank_project, reaper_project
@@ -429,7 +429,7 @@ class MainWindow(QMainWindow):
                      HOST_APO: ("Equalizer APO", "Clic : ouvrir l'éditeur d'Equalizer APO")}
             name, tip = names.get(host.kind, ("Voicemeeter seul", "Aucun moteur d'effets"))
             self.master.set_project(name, "", tip)
-            self.master.project.setVisible(host.kind != HOST_NONE)
+            self.master.project.setVisible(host.kind not in (HOST_NONE, HOST_REKA))
             return
         name = Path(path).stem if path else "…"
         if path and is_blank_project(path):
@@ -588,16 +588,24 @@ class MainWindow(QMainWindow):
         if target.suffix.lower() != backup.EXTENSION:
             target = target.with_name(target.name + backup.EXTENSION)
         self._store_state()
-        host, project, wait = self._reaper, None, 0
+        host, project, chains, wait = self._reaper, None, None, 0
         if host.kind == HOST_REAPER and host.project_path:
             project = Path(host.project_path)
             if self._reaper_ok:
                 host.save_project()
                 wait = EXPORT_SAVE_MS
+        elif host.kind == HOST_REKA:
+            chains = host.chains_file
+            if self._reaper_ok:
+                host.save_project()        # réglages des plugins relus avant l'export
+                wait = EXPORT_SAVE_MS
 
         def write() -> None:
             try:
-                saved = backup.export_backup(running_config(self._cfg, self._vm), target, project)
+                if chains is not None and not chains.is_file():
+                    host.write_chains()
+                saved = backup.export_backup(running_config(self._cfg, self._vm), target, project,
+                                             chains=chains)
             except backup.BackupError as exc:
                 ok, message = False, str(exc)
             else:
@@ -621,6 +629,10 @@ class MainWindow(QMainWindow):
         except backup.BackupError as exc:
             return False, str(exc)
         self._keep_state = True
+        if report.chains:
+            keep = getattr(self._reaper, "keep_imported_chains", None)
+            if keep is not None:
+                keep()                     # le moteur en cours n'écrase pas les chaînes importées
         self._save_config()
         return True, "\n".join(["Config importée.", *report.notes])
 
@@ -708,6 +720,11 @@ class MainWindow(QMainWindow):
                                plugins=scan_vst2(default_vst2_dirs(extra_dirs)),
                                browse_filter="Plugin VST2 64 bits (*.dll)",
                                note="Equalizer APO charge les plugins VST2 64 bits (.dll).")
+        elif host.kind == HOST_REKA:
+            dialog = VstDialog(strip.strip_name(), None, None, extra_dirs, self,
+                               plugins=host.installed_plugins(refresh=True),
+                               browse_filter="Plugin VST (*.vst3 *.dll)",
+                               note="REKA charge les plugins VST3 et VST2 64 bits.")
         else:
             exe = self._processes.executable("reaper") if self._processes is not None else None
             dialog = VstDialog(strip.strip_name(), host, host.resource_path(exe), extra_dirs, self)

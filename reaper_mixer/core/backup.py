@@ -8,7 +8,9 @@ Le fichier est une archive zip :
   - background.*  : l'image d'arrière-plan, s'il y en a une ;
   - project.rpp   : le projet REAPER ouvert, donc les chaînes d'effets et les
                     réglages des plugins (les plugins eux-mêmes doivent être
-                    installés sur le PC qui importe).
+                    installés sur le PC qui importe) ;
+  - chains.json   : avec le moteur intégré (REKA), les chaînes d'effets de
+                    chaque strip et les réglages de chaque plugin (VST2 / VST3).
 
 Ce qui est propre au PC n'est pas exporté, et n'est pas touché par un import :
 chemins des moteurs, taille de la fenêtre, mise à jour ignorée, et les secrets
@@ -41,13 +43,14 @@ log = logging.getLogger(__name__)
 EXTENSION = ".reka"
 FILE_FILTER = f"Sauvegarde REKA (*{EXTENSION})"
 FORMAT = 1
-MANIFEST, CONFIG, PROJECT = "manifest.json", "config.json", "project.rpp"
+MANIFEST, CONFIG, PROJECT, CHAINS = "manifest.json", "config.json", "project.rpp", "chains.json"
 BACKGROUND_STEM = "background"
 IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg", ".bmp", ".webp", ".gif")
 PREVIOUS_NAME = f"avant-import{EXTENSION}"     # config d'avant le dernier import
 MAX_CONFIG_BYTES = 2 * 1024 * 1024
 MAX_IMAGE_BYTES = 40 * 1024 * 1024
 MAX_PROJECT_BYTES = 64 * 1024 * 1024
+MAX_CHAINS_BYTES = 64 * 1024 * 1024
 
 # Réglages propres au PC : ni exportés, ni remplacés par un import
 LOCAL_KEYS: tuple[tuple[str, str], ...] = (
@@ -56,6 +59,7 @@ LOCAL_KEYS: tuple[tuple[str, str], ...] = (
     ("reaper", "project"), ("reaper", "recent_projects"),
     ("flstudio", "path"), ("flstudio", "project"),
     ("apo", "config_dir"),
+    ("reka_host", "path"),
     ("vst", "extra_dirs"),
     ("ui", "geometry"), ("ui", "layout_version"),
     ("update", "skipped_build"), ("update", "url"),
@@ -80,6 +84,11 @@ class Backup:
     project_name: str = ""
     background: tuple[str, bytes] | None = None    # (extension, image)
     project: bytes | None = None
+    chains: dict | None = None        # chaînes d'effets du moteur REKA (vérifiées)
+
+    @property
+    def effect_count(self) -> int:
+        return sum(len(s.get("fx", [])) for s in (self.chains or {}).get("strips", []))
 
     def describe(self) -> str:
         parts = [f"REKA {self.version}" if self.version else "REKA"]
@@ -91,8 +100,11 @@ class Backup:
         text = " ".join(parts)
         if engines:
             text += f" — {' + '.join(engines)}"
+        count = self.effect_count
         extras = [label for label, present in (("image d'arrière-plan", self.background is not None),
-                                               ("projet REAPER", self.project is not None))
+                                               ("projet REAPER", self.project is not None),
+                                               (f"{count} effet{'s' if count > 1 else ''} REKA",
+                                                count > 0))
                   if present]
         return text + (f" (avec {' et '.join(extras)})" if extras else "")
 
@@ -101,6 +113,7 @@ class Backup:
 class ImportReport:
     notes: list[str] = field(default_factory=list)   # ce que l'utilisateur doit savoir
     project: str = ""                                # projet REAPER importé (nom du fichier)
+    chains: bool = False                             # chaînes d'effets REKA importées
     previous: Path | None = None                     # sauvegarde de la config d'avant
 
 
@@ -124,14 +137,18 @@ def background_file(cfg: dict) -> Path | None:
     return path
 
 
-def export_backup(cfg: dict, target: Path, project: Path | None = None) -> Backup:
+def export_backup(cfg: dict, target: Path, project: Path | None = None,
+                  chains: Path | None = None) -> Backup:
     """Écrit la sauvegarde dans `target` (remplacé d'un coup, une fois complet).
-    `project` : le projet REAPER à joindre (déjà enregistré), ou None."""
+    `project` : le projet REAPER à joindre (déjà enregistré), ou None.
+    `chains` : les chaînes d'effets du moteur REKA (chains.json), ou None."""
     target = Path(target)
     background = background_file(cfg)
     if project is not None and not (project.is_file() and project.suffix.lower() == ".rpp"
                                     and project.stat().st_size <= MAX_PROJECT_BYTES):
         project = None
+    if chains is not None and not (chains.is_file() and chains.stat().st_size <= MAX_CHAINS_BYTES):
+        chains = None
     manifest = {
         "app": config.APP_NAME, "format": FORMAT, "version": config.APP_VERSION,
         "created": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
@@ -148,6 +165,8 @@ def export_backup(cfg: dict, target: Path, project: Path | None = None) -> Backu
                 archive.write(background, BACKGROUND_STEM + background.suffix.lower())
             if project is not None:
                 archive.write(project, PROJECT)
+            if chains is not None:
+                archive.write(chains, CHAINS)
         os.replace(tmp, target)
     except OSError as exc:
         tmp.unlink(missing_ok=True)
@@ -208,15 +227,23 @@ def read_backup(path: Path) -> Backup:
                 if image:
                     background = (suffix, image)
             project = _member(archive, PROJECT, MAX_PROJECT_BYTES)
+            chains_data = _member(archive, CHAINS, MAX_CHAINS_BYTES)
     except (zipfile.BadZipFile, OSError, RuntimeError, NotImplementedError) as exc:
         raise BackupError("Ce fichier n'est pas une sauvegarde REKA lisible.") from exc
     if project is not None and not project.lstrip().startswith(b"<REAPER_PROJECT"):
         project = None
+    chains = None
+    if chains_data is not None:
+        from core.reka_host import ChainsError, parse_chains
+        try:
+            chains = parse_chains(chains_data)
+        except ChainsError as exc:
+            log.warning("Chaînes d'effets de la sauvegarde ignorées : %s", exc)
     return Backup(config=cfg, version=str(manifest.get("version") or ""),
                   created=str(manifest.get("created") or ""),
                   kind=str(manifest.get("kind") or ""), host=str(manifest.get("host") or ""),
                   project_name=str(manifest.get("project") or ""),
-                  background=background, project=project)
+                  background=background, project=project, chains=chains)
 
 
 # --------------------------------------------------------------------------- #
@@ -288,7 +315,9 @@ def import_backup(cfg: dict, backup: Backup, installed_kinds: Iterable[str] | No
 
     if keep_previous:
         try:
-            export_backup(cfg, folder / PREVIOUS_NAME)
+            current_chains = folder / CHAINS
+            export_backup(cfg, folder / PREVIOUS_NAME,
+                          chains=current_chains if current_chains.is_file() else None)
             report.previous = folder / PREVIOUS_NAME
         except BackupError as exc:
             log.warning("Config d'avant l'import non sauvegardée : %s", exc)
@@ -313,6 +342,17 @@ def import_backup(cfg: dict, backup: Backup, installed_kinds: Iterable[str] | No
                 new.setdefault("reaper", {})["project"] = report.project
                 report.notes.append(f"Projet REAPER importé : « {Path(report.project).stem} ». "
                                     "Ses plugins doivent être installés sur ce PC.")
+
+        if backup.chains is not None:
+            from core.reka_host import CHAINS_FILENAME, save_chains_file
+            target = folder / CHAINS_FILENAME
+            if target.is_file():           # chaînes d'avant l'import : gardées à côté
+                target.replace(folder / f"avant-import-{CHAINS_FILENAME}")
+            save_chains_file(target, backup.chains)
+            report.chains = True
+            count = backup.effect_count
+            report.notes.append(f"Chaînes d'effets importées ({count} effet{'s' if count > 1 else ''}"
+                                ", réglages compris). Les plugins doivent être installés sur ce PC.")
     except OSError as exc:
         raise BackupError(f"Import impossible : {exc}") from exc
 
