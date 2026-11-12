@@ -2,6 +2,19 @@ Télécharge **REKA.exe** et lance-le. Il faut Voicemeeter (Potato ou Banana) et
 effets, REAPER, FL Studio ou Equalizer APO. REKA se met ensuite à jour toute seule (pill
 « Mise à jour » du Master). Pour voir la console sans rien installer : `REKA.exe --demo`.
 
+## 0.8.0
+
+- **Rich Presence Discord** : ton profil affiche « Joue à REKA », depuis combien de temps, et
+  un bouton pour la télécharger. Désactivable dans ⚙ → Discord.
+- **Micro synchronisé avec Discord** : coupe ton micro dans REKA, le micro barré s'affiche dans
+  Discord, et l'inverse. Tu choisis le canal et le sens dans ⚙ → Discord. Il faut ta propre
+  application Discord (2 minutes, expliqué dans l'onglet) : Discord réserve ce réglage au
+  propriétaire de l'application.
+- **Export / import de toute la config** : ⚙ → Général → *Sauvegarde de la config* écrit un
+  seul fichier `.reka` (thème, couleurs, image d'arrière-plan, noms des canaux, routing, état
+  de la console, projet REAPER avec ses chaînes d'effets). Pour changer de PC, réinstaller
+  Windows ou partager tes réglages. Les chemins des moteurs et les secrets Discord n'y sont pas.
+
 ## 0.7.0
 
 - **Entrées et sorties au choix** : ⚙ → Audio → *Entrées et sorties* règle le micro ou la carte

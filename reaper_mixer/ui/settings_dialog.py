@@ -1,12 +1,14 @@
 """
 Réglages de REKA, en onglets :
   - Général    : projet REAPER, édition de Voicemeeter (Potato / Banana),
-                 chemins des moteurs
+                 chemins des moteurs, export / import de toute la config
   - Audio      : carte son de REAPER, affichage des moteurs, options
   - Apparence  : thème de couleur, image d'arrière-plan, transparence des
                  panneaux, fenêtre
   - Couleurs   : couleur de chaque élément (knobs, Muet, VU…), pour toute
                  la console, un canal ou le Master
+  - Discord    : Rich Presence, micro synchronisé avec le Muet d'un canal,
+                 application Discord utilisée
   - À propos   : version, développeurs, mises à jour, journaux
 
 Les options s'appliquent tout de suite ; tout est écrit dans la config à la
@@ -28,7 +30,7 @@ from PySide6.QtWidgets import (QAbstractButton, QButtonGroup, QCheckBox, QColorD
                                QLineEdit, QPushButton, QRadioButton, QSlider, QTabWidget,
                                QVBoxLayout, QWidget)
 
-from core import config
+from core import backup, config, discord_rpc
 from core.process_manager import is_blank_project
 from core.effects import HOST_APO, HOST_FLSTUDIO, HOST_REAPER, HOSTS, host_kind
 from core.voicemeeter_ctrl import EDITIONS, edition, strip_map
@@ -190,12 +192,15 @@ class SettingsDialog(QDialog):
     updateRequested = Signal()       # « Installer la mise à jour »
     stripRenamed = Signal(int, str)  # nom d'un canal modifié
     latencyChanged = Signal()        # tampon de Voicemeeter / périphériques APO modifiés
+    discordChanged = Signal()        # réglages Discord modifiés
+    exportRequested = Signal(str)    # « Exporter… » : fichier .reka à écrire
+    importRequested = Signal(object) # « Importer… » : sauvegarde lue et confirmée (Backup)
 
     BUFFER_CHOICES = ((0, "Ne pas modifier"), (512, "Standard — 512 échantillons"),
                       (256, "Réduit — 256 échantillons"), (128, "Minimal — 128 échantillons (PC puissant)"))
 
     def __init__(self, cfg: dict, processes, reaper, vm, parent: QWidget | None = None,
-                 persist: bool = True, updater=None) -> None:
+                 persist: bool = True, updater=None, discord=None) -> None:
         super().__init__(parent)
         self.setWindowTitle(f"Réglages — {config.APP_NAME}")
         self.setMinimumWidth(600)
@@ -206,6 +211,8 @@ class SettingsDialog(QDialog):
         self._reaper = reaper
         self._vm = vm
         self._updater = updater
+        self._discord = discord
+        self._replaced = False       # config importée : les réglages affichés ne sont plus écrits
         # Édition et moteur d'effets réellement en cours (un choix ne s'applique qu'au redémarrage)
         self._running_kind = getattr(getattr(vm, "edition", None), "kind", None) or edition(cfg).kind
         self._running_host = getattr(reaper, "kind", None) or host_kind(cfg)
@@ -231,7 +238,7 @@ class SettingsDialog(QDialog):
         layout.addLayout(header)
 
         self.tabs = QTabWidget()
-        general = [self._engines_group()]
+        general = [self._engines_group(), self._backup_group()]
         if self._running_host == HOST_REAPER:
             general.insert(0, self._project_group())
         self.tabs.addTab(self._tab(*general), "Général")
@@ -245,6 +252,8 @@ class SettingsDialog(QDialog):
         self.tabs.addTab(self._tab(self._presets_group(), self._theme_group(), self._widgets_group(),
                                    self._background_group(), self._window_group()), "Apparence")
         self.tabs.addTab(self._tab(self._colors_group()), "Couleurs")
+        self.tabs.addTab(self._tab(self._presence_group(), self._mute_group(),
+                                   self._discord_app_group()), "Discord")
         self.tabs.addTab(self._about_tab(), "À propos")
         layout.addWidget(self.tabs, 1)
 
@@ -272,6 +281,9 @@ class SettingsDialog(QDialog):
         if self._has_devices:
             vm.devices_changed.connect(self._show_devices)
             vm.request_devices()
+        if discord is not None:
+            discord.statusChanged.connect(self._show_discord_status)
+        self._show_discord_status(discord.status if discord is not None else None)
 
     @staticmethod
     def _tab(*groups: QWidget) -> QWidget:
@@ -350,6 +362,79 @@ class SettingsDialog(QDialog):
         form.addRow(_hint("Laisse vide pour la détection automatique. "
                           "Pris en compte au prochain démarrage."))
         return group
+
+    def _backup_group(self) -> QGroupBox:
+        group = QGroupBox("Sauvegarde de la config")
+        box = QVBoxLayout(group)
+        buttons = QHBoxLayout()
+        self.export_button = QPushButton("Exporter…")
+        self.export_button.clicked.connect(self._export_config)
+        buttons.addWidget(self.export_button)
+        self.import_button = QPushButton("Importer…")
+        self.import_button.clicked.connect(self._import_config)
+        buttons.addWidget(self.import_button)
+        buttons.addStretch(1)
+        box.addLayout(buttons)
+        self.backup_status = _hint(
+            "Un seul fichier .reka avec tout : thème et couleurs, image d'arrière-plan, noms des "
+            "canaux, routing, état de la console et projet REAPER (chaînes d'effets). Pour "
+            "changer de PC, réinstaller Windows ou partager tes réglages. Les chemins des "
+            "moteurs et les secrets Discord n'y sont pas.")
+        box.addWidget(self.backup_status)
+        return group
+
+    def _export_config(self) -> None:
+        name = f"{config.APP_NAME}-{config.APP_VERSION}{backup.EXTENSION}"
+        path, _ = QFileDialog.getSaveFileName(self, "Exporter la config de REKA",
+                                              str(Path.home() / name), backup.FILE_FILTER)
+        if path:
+            self.export_config(path)
+
+    def export_config(self, path: str) -> None:
+        self._save()                  # réglages en cours de saisie compris
+        self.show_backup_status(True, "Export en cours…")
+        self.export_button.setEnabled(False)
+        self.exportRequested.emit(path)
+
+    def _import_config(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(self, "Importer une config de REKA",
+                                              str(Path.home()), backup.FILE_FILTER)
+        if path:
+            self.import_config(path)
+
+    def import_config(self, path: str) -> None:
+        if not self._persist:
+            self.show_backup_status(False, "Mode démo : l'import est désactivé.")
+            return
+        try:
+            data = backup.read_backup(Path(path))
+        except backup.BackupError as exc:
+            self.show_backup_status(False, str(exc))
+            return
+        answer = QMessageBox.question(
+            self, "Importer une config",
+            f"{data.describe()}\n\nL'import remplace tes réglages actuels (thème, canaux, "
+            "routing, état de la console), puis REKA redémarre. Tes réglages d'avant sont "
+            f"gardés dans « {backup.PREVIOUS_NAME} », dans le dossier de REKA.\n\nContinuer ?")
+        if answer == QMessageBox.StandardButton.Yes:
+            self.importRequested.emit(data)
+
+    def show_backup_status(self, ok: bool, message: str) -> None:
+        self.export_button.setEnabled(True)
+        self.backup_status.setText(message)
+        self._set_tone(self.backup_status, "hint" if ok else "warning")
+
+    def config_replaced(self) -> None:
+        """La config vient d'être remplacée par un import : ce dialogue ne doit
+        plus y écrire les réglages qu'il affiche."""
+        self._replaced = True
+
+    @staticmethod
+    def _set_tone(label: QLabel, name: str) -> None:
+        """Change le style d'un texte (« hint », « ok », « warning »)."""
+        label.setObjectName(name)
+        label.style().unpolish(label)
+        label.style().polish(label)
 
     def _path_row(self, form: QFormLayout, label: str, section: str, key: str = "path",
                   file_filter: str | None = "Exécutable (*.exe)",
@@ -979,6 +1064,127 @@ class SettingsDialog(QDialog):
         self.check_update.setEnabled(True)
         self.update_status.setText(f"Vérification impossible : {message}")
 
+    # ------------------------------------------------------------ Discord
+    def _discord_cfg(self) -> dict:
+        return self._cfg.setdefault("discord", {})
+
+    def _set_discord(self, key: str, value) -> None:
+        if self._discord_cfg().get(key) != value:
+            self._discord_cfg()[key] = value
+            self.discordChanged.emit()
+            self._show_discord_status(self._discord.status if self._discord is not None else None)
+
+    def _presence_group(self) -> QGroupBox:
+        group = QGroupBox("Rich Presence")
+        box = QVBoxLayout(group)
+        self.discord_presence = QCheckBox(f"Afficher « Joue à {config.APP_NAME} » sur mon profil Discord")
+        self.discord_presence.setChecked(bool(self._discord_cfg().get("rich_presence", True)))
+        self.discord_presence.toggled.connect(lambda on: self._set_discord("rich_presence", on))
+        box.addWidget(self.discord_presence)
+        box.addWidget(_hint(
+            "Tes amis voient que tu mixes avec REKA, depuis combien de temps, et un bouton pour "
+            "la télécharger. Rien d'autre n'est envoyé : ni tes canaux, ni ta musique."))
+        return group
+
+    def _mute_group(self) -> QGroupBox:
+        group = QGroupBox("Micro synchronisé")
+        box = QVBoxLayout(group)
+        section = self._discord_cfg()
+        self.discord_mute = QCheckBox("Synchroniser le Muet d'un canal avec le micro de Discord")
+        self.discord_mute.setChecked(bool(section.get("mute_sync", False)))
+        self.discord_mute.toggled.connect(lambda on: self._set_discord("mute_sync", on))
+        box.addWidget(self.discord_mute)
+        form = QFormLayout()
+        names = list(self._cfg.get("ui", {}).get("strip_names", []))
+        count = int(getattr(self._vm, "strip_count", 0) or len(names))
+        self.discord_strip = QComboBox()
+        for index in range(count):
+            self.discord_strip.addItem(names[index] if index < len(names) else f"Strip {index + 1}",
+                                       index)
+        try:
+            chosen = int(section.get("mute_strip", 0) or 0)
+        except (TypeError, ValueError):
+            chosen = 0
+        self.discord_strip.setCurrentIndex(max(0, self.discord_strip.findData(chosen)))
+        self.discord_strip.currentIndexChanged.connect(
+            lambda _row: self._set_discord("mute_strip", self.discord_strip.currentData()))
+        form.addRow("Canal", self.discord_strip)
+        self.discord_direction = QComboBox()
+        for key, label in discord_rpc.DIRECTIONS.items():
+            self.discord_direction.addItem(label, key)
+        self.discord_direction.setCurrentIndex(max(0, self.discord_direction.findData(
+            discord_rpc.mute_direction(self._cfg))))
+        self.discord_direction.currentIndexChanged.connect(
+            lambda _row: self._set_discord("mute_direction", self.discord_direction.currentData()))
+        form.addRow("Sens", self.discord_direction)
+        box.addLayout(form)
+        box.addWidget(_hint(
+            "Coupe ton micro dans REKA : le micro barré s'affiche dans Discord, et l'inverse. "
+            "Au lancement, c'est l'état de REKA qui est repris. Demande ta propre application "
+            "Discord (ci-dessous) : Discord réserve ce réglage au propriétaire de l'application."))
+        return group
+
+    def _discord_app_group(self) -> QGroupBox:
+        group = QGroupBox("Application Discord")
+        box = QVBoxLayout(group)
+        section = self._discord_cfg()
+        form = QFormLayout()
+        self.discord_id = QLineEdit(str(section.get("client_id", "") or ""))
+        self.discord_id.setPlaceholderText("Celle de REKA" if discord_rpc.REKA_CLIENT_ID
+                                           else "Application ID (des chiffres)")
+        self.discord_id.editingFinished.connect(
+            lambda: self._set_discord("client_id", self.discord_id.text().strip()))
+        form.addRow("Application ID", self.discord_id)
+        self.discord_secret = QLineEdit(str(section.get("client_secret", "") or ""))
+        self.discord_secret.setEchoMode(QLineEdit.EchoMode.Password)
+        self.discord_secret.setPlaceholderText("Pour le micro synchronisé seulement")
+        self.discord_secret.editingFinished.connect(
+            lambda: self._set_discord("client_secret", self.discord_secret.text().strip()))
+        form.addRow("Client Secret", self.discord_secret)
+        box.addLayout(form)
+        row = QHBoxLayout()
+        self.discord_status = QLabel()
+        self.discord_status.setWordWrap(True)
+        row.addWidget(self.discord_status, 1)
+        self.discord_authorize = QPushButton("Autoriser dans Discord")
+        self.discord_authorize.clicked.connect(self._authorize_discord)
+        row.addWidget(self.discord_authorize)
+        box.addLayout(row)
+        steps = QLabel(
+            f"Créer ton application (2 minutes) : <a href=\"{discord_rpc.DEVELOPER_PORTAL}\" "
+            f"style=\"color: {styles.GREEN_NEON};\">"
+            "discord.com/developers</a> → <b>New Application</b>, nomme-la « REKA » (c'est le nom "
+            "affiché après « Joue à »). Copie son <b>Application ID</b> ici. Pour le micro "
+            f"synchronisé : onglet <b>OAuth2</b> → ajoute la redirection <b>{discord_rpc.REDIRECT_URI}</b>, "
+            "puis <b>Reset Secret</b> et copie le <b>Client Secret</b> ici. Discord te demandera "
+            "une fois d'autoriser REKA.")
+        steps.setObjectName("hint")
+        steps.setWordWrap(True)
+        steps.setOpenExternalLinks(True)
+        box.addWidget(steps)
+        box.addWidget(_hint("Le Client Secret reste sur ce PC : il n'est jamais exporté avec la config."))
+        return group
+
+    def _authorize_discord(self) -> None:
+        # Champs en cours de saisie pris en compte avant de demander l'autorisation
+        self._set_discord("client_id", self.discord_id.text().strip())
+        self._set_discord("client_secret", self.discord_secret.text().strip())
+        if self._discord is not None:
+            self._discord.authorize()
+
+    def _show_discord_status(self, status) -> None:
+        if status is None or self._discord is None or not self._discord.available:
+            self.discord_status.setText("Discord n'est pas disponible dans cette session.")
+            self._set_tone(self.discord_status, "hint")
+            self.discord_authorize.setEnabled(False)
+            return
+        text = status.message + (f" Compte : {status.user}." if status.user else "")
+        self.discord_status.setText(text)
+        self._set_tone(self.discord_status, "warning" if status.problem
+                       else "ok" if status.connected else "hint")
+        self.discord_authorize.setEnabled(
+            bool(self._discord_cfg().get("mute_sync")) and not status.voice)
+
     # ------------------------------------------------------------ actions
     def _browse(self, edit: QLineEdit, label: str, file_filter: str | None = "Exécutable (*.exe)") -> None:
         if file_filter is None:
@@ -1170,6 +1376,8 @@ class SettingsDialog(QDialog):
         connections = []
         if self._has_devices:
             connections.append((self._vm.devices_changed, self._show_devices))
+        if self._discord is not None:
+            connections.append((self._discord.statusChanged, self._show_discord_status))
         if self._reaper is not None:
             connections += [(self._reaper.device_changed, self._show_device),
                             (self._reaper.project_changed, self._show_project)]
@@ -1186,6 +1394,10 @@ class SettingsDialog(QDialog):
         super().done(result)
 
     def _save(self) -> None:
+        if self._replaced:
+            return
+        self._set_discord("client_id", self.discord_id.text().strip())
+        self._set_discord("client_secret", self.discord_secret.text().strip())
         vm_cfg, reaper_cfg = self._cfg.setdefault("voicemeeter", {}), self._cfg.setdefault("reaper", {})
         vm_cfg["path"] = self.vm_path.text().strip()
         reaper_cfg["path"] = self.reaper_path.text().strip()
