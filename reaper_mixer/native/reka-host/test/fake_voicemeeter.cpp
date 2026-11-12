@@ -8,6 +8,7 @@
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
+#include <string>
 #include <thread>
 #include <vector>
 

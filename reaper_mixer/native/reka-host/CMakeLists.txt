@@ -46,6 +46,7 @@ add_executable(reka-host WIN32
     ${CMAKE_BINARY_DIR}/reka-host.rc)
 target_include_directories(reka-host PRIVATE src ${CMAKE_BINARY_DIR}/vst3)
 target_compile_definitions(reka-host PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN
+                           _CRT_SECURE_NO_WARNINGS
                            $<$<CONFIG:Release>:RELEASE=1> $<$<NOT:$<CONFIG:Release>>:DEVELOPMENT=1>)
 target_link_libraries(reka-host PRIVATE nlohmann_json::nlohmann_json ws2_32 ole32 shell32
                       advapi32 user32 gdi32)
