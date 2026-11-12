@@ -78,6 +78,8 @@
   },
   "discord": {
     "rich_presence": true,
+    "details": "Vst",
+    "state": "talking",
     "mute_sync": false,
     "mute_strip": 0,
     "mute_direction": "both",

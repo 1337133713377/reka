@@ -54,7 +54,8 @@ def test_export_contains_everything_but_local_settings(cfg, appdata, tmp_path):
         text = archive.read("config.json").decode("utf-8") + archive.read("manifest.json").decode("utf-8")
     assert exported["ui"]["theme"] == "synthwave" and exported["ui"]["colors"] == {"mute": "#ff00aa"}
     assert exported["state"]["strips"][0]["mute"] is True
-    assert exported["discord"] == {"rich_presence": True, "mute_sync": True, "mute_strip": 0,
+    assert exported["discord"] == {"rich_presence": True, "details": "Vst", "state": "talking",
+                                   "mute_sync": True, "mute_strip": 0,
                                    "mute_direction": "both", "client_id": "123"}
     # Ni secrets, ni chemins du PC (donc pas le nom du compte Windows) : partageable
     for private in ("s3cret", "jeton", "suivant", "C:\\\\", "moi", "AAAA"):

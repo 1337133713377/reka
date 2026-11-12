@@ -30,7 +30,7 @@ from shiboken6 import isValid
 from core import backup, config
 from core.app_volume import AppVolumeBackend, NullAppVolumes
 from core.discord_rpc import (TOKEN_KEYS, DiscordBackend, DiscordSettings, DiscordStatus, MuteLink,
-                              Presence, mute_direction)
+                              Presence, mute_direction, presence_from_config)
 from core.effects import HOST_APO, HOST_NONE, HOST_REAPER
 from core.engine_load import EngineLoadMonitor
 from core.media import MediaBackend, NullMedia
@@ -518,11 +518,12 @@ class MainWindow(QMainWindow):
 
     # --------------------------------------------------------------- Discord
     def _presence(self) -> Presence:
-        """Ce que le profil Discord affiche : les moteurs de la session."""
+        """Ce que le profil Discord affiche : les deux lignes des réglages (une
+        ligne 2 vide montre les moteurs de la session), depuis le lancement."""
         label = getattr(getattr(self._vm, "edition", None), "label", "Voicemeeter").split(" (")[0]
         if self._reaper.kind != HOST_NONE:
             label += f" · {self._reaper.label}"
-        return Presence(state=label, start=self._started_at)
+        return presence_from_config(self._cfg, label, self._started_at)
 
     def _mute_strip(self) -> int | None:
         """Strip dont le Muet suit le micro de Discord, ou None (option coupée)."""

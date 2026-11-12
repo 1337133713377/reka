@@ -141,6 +141,15 @@ def mute_direction(cfg: dict) -> str:
     return value if value in DIRECTIONS else BOTH
 
 
+def presence_from_config(cfg: dict, fallback_state: str = "", start: int = 0) -> "Presence":
+    """Les deux lignes choisies dans les réglages (discord.details / discord.state).
+    Une ligne vide reprend le texte d'origine : « Console de mixage audio », et
+    les moteurs de la session (`fallback_state`)."""
+    section = cfg.get("discord") or {}
+    return Presence(details=_line(section.get("details") or "") or Presence.details,
+                    state=_line(section.get("state") or "") or fallback_state, start=start)
+
+
 def _line(text: str) -> str:
     """Ligne d'activité acceptée par Discord (2 à 128 caractères), ou ""."""
     text = " ".join(str(text).split())[:TEXT_MAX]

@@ -1081,10 +1081,26 @@ class SettingsDialog(QDialog):
         self.discord_presence.setChecked(bool(self._discord_cfg().get("rich_presence", True)))
         self.discord_presence.toggled.connect(lambda on: self._set_discord("rich_presence", on))
         box.addWidget(self.discord_presence)
+        form = QFormLayout()
+        section = self._discord_cfg()
+        self.discord_details = self._presence_line("details", str(section.get("details", "") or ""),
+                                                   discord_rpc.Presence.details)
+        form.addRow("Ligne 1", self.discord_details)
+        self.discord_state = self._presence_line("state", str(section.get("state", "") or ""),
+                                                 "Les moteurs utilisés (Voicemeeter · REAPER)")
+        form.addRow("Ligne 2", self.discord_state)
+        box.addLayout(form)
         box.addWidget(_hint(
-            "Tes amis voient que tu mixes avec REKA, depuis combien de temps, et un bouton pour "
-            "la télécharger. Rien d'autre n'est envoyé : ni tes canaux, ni ta musique."))
+            "Tes amis voient ces deux lignes sous « Joue à REKA », depuis combien de temps, et un "
+            "bouton pour la télécharger. Rien d'autre n'est envoyé : ni tes canaux, ni ta musique."))
         return group
+
+    def _presence_line(self, key: str, text: str, placeholder: str) -> QLineEdit:
+        edit = QLineEdit(text)
+        edit.setMaxLength(discord_rpc.TEXT_MAX)
+        edit.setPlaceholderText(placeholder)
+        edit.editingFinished.connect(lambda: self._set_discord(key, edit.text().strip()))
+        return edit
 
     def _mute_group(self) -> QGroupBox:
         group = QGroupBox("Micro synchronisé")
@@ -1398,6 +1414,8 @@ class SettingsDialog(QDialog):
             return
         self._set_discord("client_id", self.discord_id.text().strip())
         self._set_discord("client_secret", self.discord_secret.text().strip())
+        self._set_discord("details", self.discord_details.text().strip())
+        self._set_discord("state", self.discord_state.text().strip())
         vm_cfg, reaper_cfg = self._cfg.setdefault("voicemeeter", {}), self._cfg.setdefault("reaper", {})
         vm_cfg["path"] = self.vm_path.text().strip()
         reaper_cfg["path"] = self.reaper_path.text().strip()

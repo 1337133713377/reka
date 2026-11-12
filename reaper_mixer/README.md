@@ -118,9 +118,10 @@ indique s'il est installé sur le PC et le délai qu'il ajoute à la voix. On le
 ⚙ → **Discord**. REKA parle au client Discord installé sur le PC (son canal local) : rien ne
 passe par un serveur de REKA.
 
-- **Rich Presence** : ton profil affiche « Joue à REKA », depuis combien de temps, les moteurs
-  utilisés (« Voicemeeter Potato · REAPER ») et un bouton *Télécharger REKA*. Rien d'autre
-  n'est envoyé. Décoche la case pour le couper ; l'activité disparaît tout de suite.
+- **Rich Presence** : ton profil affiche « Joue à REKA », deux lignes de texte (*Ligne 1* et
+  *Ligne 2*, « Vst » et « talking » par défaut ; une ligne 2 vide montre les moteurs utilisés,
+  « Voicemeeter Potato · REAPER »), depuis combien de temps, et un bouton *Télécharger REKA*.
+  Rien d'autre n'est envoyé. Décoche la case pour le couper ; l'activité disparaît tout de suite.
 - **Micro synchronisé** : le **Muet** d'un canal (le micro par défaut) et le micro barré de
   Discord se suivent. *Sens* : dans les deux sens, REKA → Discord seulement, ou Discord → REKA
   seulement. Au lancement, c'est l'état de REKA qui est repris (sauf dans le dernier sens).

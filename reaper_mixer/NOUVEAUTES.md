@@ -4,8 +4,9 @@ effets, REAPER, FL Studio ou Equalizer APO. REKA se met ensuite à jour toute se
 
 ## 0.8.0
 
-- **Rich Presence Discord** : ton profil affiche « Joue à REKA », depuis combien de temps, et
-  un bouton pour la télécharger. Désactivable dans ⚙ → Discord.
+- **Rich Presence Discord** : ton profil affiche « Joue à REKA », deux lignes de texte que tu
+  choisis, depuis combien de temps, et un bouton pour la télécharger. Désactivable dans
+  ⚙ → Discord.
 - **Micro synchronisé avec Discord** : coupe ton micro dans REKA, le micro barré s'affiche dans
   Discord, et l'inverse. Tu choisis le canal et le sens dans ⚙ → Discord. Il faut ta propre
   application Discord (2 minutes, expliqué dans l'onglet) : Discord réserve ce réglage au

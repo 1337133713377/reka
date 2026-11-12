@@ -181,6 +181,16 @@ def test_presence_activity():
     assert "details" not in short and len(short["state"]) == 128 and "timestamps" not in short
 
 
+def test_presence_lines_from_config(cfg):
+    presence = discord_rpc.presence_from_config(cfg, "Voicemeeter Potato", 12)
+    assert (presence.details, presence.state, presence.start) == ("Vst", "talking", 12)
+    cfg["discord"].update(details="", state="x")       # vide ou trop court pour Discord
+    presence = discord_rpc.presence_from_config(cfg, "Voicemeeter Potato")
+    assert (presence.details, presence.state) == ("Console de mixage audio", "Voicemeeter Potato")
+    del cfg["discord"]
+    assert discord_rpc.presence_from_config(cfg).details == "Console de mixage audio"
+
+
 def test_settings_from_config(cfg, monkeypatch):
     settings = DiscordSettings.from_config(cfg)
     assert settings.presence and not settings.mute_sync and settings.enabled
@@ -468,7 +478,8 @@ def console(qapp, cfg):
 def test_console_mute_follows_discord(qapp, console):
     window, vm, discord = console
     assert discord.status.voice and discord.sent == []        # déjà pareil : rien à envoyer
-    assert discord.presence.state == "Voicemeeter Potato · REAPER"
+    assert (discord.presence.details, discord.presence.state) == ("Vst", "talking")
+    assert discord.presence.start > 0
 
     window.strips[1].mute.click()                 # Muet dans REKA → micro barré dans Discord
     pump(qapp, 0.05)
@@ -532,6 +543,16 @@ def test_settings_discord_tab(qapp, console):
     assert "micro synchronisé" in dialog.discord_status.text()
     assert dialog.discord_status.objectName() == "ok" and not dialog.discord_authorize.isEnabled()
     assert dialog.discord_secret.echoMode() == dialog.discord_secret.EchoMode.Password
+
+    # Les deux lignes affichées sur le profil : modifiables, appliquées tout de suite
+    assert (dialog.discord_details.text(), dialog.discord_state.text()) == ("Vst", "talking")
+    dialog.discord_details.setText("  En live  ")
+    dialog.discord_details.editingFinished.emit()
+    assert window._cfg["discord"]["details"] == "En live" and discord.presence.details == "En live"
+    dialog.discord_state.setText("")              # vide : les moteurs de la session
+    dialog.discord_state.editingFinished.emit()
+    assert discord.presence.state == "Voicemeeter Potato · REAPER"
+    changes.clear()
 
     dialog.discord_presence.setChecked(False)     # Rich Presence désactivable
     assert window._cfg["discord"]["rich_presence"] is False and len(changes) == 1
