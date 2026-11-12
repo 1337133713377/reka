@@ -1,0 +1,27 @@
+// Icône des fenêtres de plugins, et propriétés de l'exe
+#include <winver.h>
+
+1 ICON "@REKA_ICON@"
+
+VS_VERSION_INFO VERSIONINFO
+FILEVERSION 0,1,0,0
+PRODUCTVERSION 0,1,0,0
+BEGIN
+  BLOCK "StringFileInfo"
+  BEGIN
+    BLOCK "040C04B0"
+    BEGIN
+      VALUE "CompanyName", "Regrettable et Zerka"
+      VALUE "FileDescription", "REKA - moteur d'effets"
+      VALUE "FileVersion", "0.1.0"
+      VALUE "InternalName", "reka-host"
+      VALUE "OriginalFilename", "reka-host.exe"
+      VALUE "ProductName", "REKA"
+      VALUE "ProductVersion", "0.1.0"
+    END
+  END
+  BLOCK "VarFileInfo"
+  BEGIN
+    VALUE "Translation", 0x040C, 1200
+  END
+END

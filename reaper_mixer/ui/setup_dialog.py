@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (QButtonGroup, QDialog, QGroupBox, QHBoxLayout, QL
                                QRadioButton, QVBoxLayout, QWidget)
 
 from core import config
-from core.effects import HOST_APO, HOST_FLSTUDIO, HOST_NONE, HOST_REAPER, HOSTS, host_kind
+from core.effects import HOST_APO, HOST_FLSTUDIO, HOST_NONE, HOST_REAPER, HOST_REKA, HOSTS, host_kind
 from core.voicemeeter_ctrl import EDITIONS, edition
 
 log = logging.getLogger(__name__)
@@ -45,6 +45,12 @@ def detect_hosts(cfg: dict) -> dict[str, bool]:
         except Exception as exc:
             log.warning("Détection de %s impossible : %s", spec.name, exc)
             found[key] = False
+    try:
+        from core.reka_host import engine_executable
+        found[HOST_REKA] = engine_executable(cfg) is not None
+    except Exception as exc:
+        log.warning("Détection du moteur REKA impossible : %s", exc)
+        found[HOST_REKA] = False
     try:
         found[HOST_APO] = find_config_dir(cfg) is not None
     except Exception as exc:

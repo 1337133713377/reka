@@ -41,9 +41,35 @@ jobs:
           QT_QPA_PLATFORM: offscreen
         run: python -m pytest -q tests
 
+  reka-host:
+    name: Moteur d'effets (reka-host.exe)
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: reaper_mixer/native/reka-host
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build (MSVC, 64 bits)
+        run: |
+          cmake -S . -B build -A x64
+          cmake --build build --config Release --parallel
+      - name: Binaires
+        run: |
+          mkdir -p ../../engine/fake-voicemeeter
+          cp build/Release/reka-host.exe build/Release/reka-test-gain.dll ../../engine/
+          cp build/fake-voicemeeter/Release/VoicemeeterRemote64.dll ../../engine/fake-voicemeeter/
+          ls -la ../../engine ../../engine/fake-voicemeeter
+      - uses: actions/upload-artifact@v4
+        with:
+          name: reka-host
+          path: reaper_mixer/engine/
+
   build-windows:
     name: Tests + build de l'exe (Windows)
-    needs: tests-linux
+    needs: [tests-linux, reka-host]
+    # Le moteur intégré est optionnel : sans lui, REKA est construit quand même
+    if: ${{ !cancelled() && needs.tests-linux.result == 'success' }}
     runs-on: windows-latest
     defaults:
       run:
@@ -58,7 +84,13 @@ jobs:
           python-version: "3.12"
       - name: Dépendances Python
         run: python -m pip install -r requirements.txt pytest
-      - name: Tests (dont masquage de fenêtres Win32)
+      - name: Moteur d'effets intégré (job reka-host)
+        if: needs.reka-host.result == 'success'
+        uses: actions/download-artifact@v4
+        with:
+          name: reka-host
+          path: reaper_mixer/engine
+      - name: Tests (dont masquage de fenêtres Win32, et le vrai reka-host.exe)
         run: python -m pytest -q tests
       - name: Infos du build (mises à jour automatiques)
         run: |

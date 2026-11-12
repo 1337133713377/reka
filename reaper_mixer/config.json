@@ -60,6 +60,9 @@
     "config_dir": "",
     "strips": []
   },
+  "reka_host": {
+    "path": ""
+  },
   "vst": {
     "extra_dirs": []
   },

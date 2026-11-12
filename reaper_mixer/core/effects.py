@@ -13,6 +13,10 @@ venir de plusieurs applications, au choix (config effects.host) :
 - apo      : Equalizer APO : REKA écrit sa configuration (plugins VST2 par
              périphérique Windows). Aucun aller-retour par l'insert : c'est le
              moteur qui ajoute le moins de délai.
+- reka     : le moteur intégré de REKA (reka-host.exe, livré avec REKA) :
+             plugins VST2 et VST3 chargés directement, branchés sur Voicemeeter
+             par son « audio callback ». Ni REAPER ni pilote ASIO à régler, et
+             les chaînes d'effets (réglages compris) voyagent dans le .reka.
 - none     : pas d'effets, Voicemeeter seul (le délai le plus faible).
 
 Tous les moteurs ont la même interface (EffectsHost) : la fenêtre principale
@@ -33,6 +37,7 @@ log = logging.getLogger(__name__)
 HOST_REAPER = "reaper"
 HOST_FLSTUDIO = "flstudio"
 HOST_APO = "apo"
+HOST_REKA = "reka"
 HOST_NONE = "none"
 DEFAULT_HOST = HOST_REAPER
 
@@ -55,6 +60,11 @@ HOSTS: dict[str, HostInfo] = {
         "Les effets se règlent dans FL Studio (ouvert depuis REKA) ; REKA gère l'insert "
         "Voicemeeter de chaque strip.",
         "Insert Voicemeeter : + 2 tampons ASIO, plus la latence des plugins."),
+    HOST_REKA: HostInfo(
+        HOST_REKA, "REKA (intégré)",
+        "Plugins VST2 et VST3 chargés par REKA lui-même : ajout, bypass, interface, "
+        "déplacement. Rien d'autre à installer, chaînes partagées dans le .reka.",
+        "Branché dans Voicemeeter : pas de tampon ASIO ajouté, seulement la latence des plugins."),
     HOST_APO: HostInfo(
         HOST_APO, "Equalizer APO",
         "Plugins VST2 appliqués par Equalizer APO sur les périphériques Windows des strips, "
@@ -235,4 +245,7 @@ def create_host(cfg: dict, processes=None) -> EffectsHost:
     if kind == HOST_APO:
         from core.apo_ctrl import ApoController
         return ApoController(cfg)
+    if kind == HOST_REKA:
+        from core.reka_host import RekaHostController
+        return RekaHostController(cfg)
     return NoEffects(cfg)

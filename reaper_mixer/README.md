@@ -85,7 +85,7 @@ sur son insert (désactivable dans ⚙ → Options).
 pour la découvrir ; `--demo --host flstudio` (ou `apo`, `none`) montre les autres moteurs
 d'effets.
 
-## Moteurs d'effets : REAPER, FL Studio, Equalizer APO ou aucun
+## Moteurs d'effets : REAPER, REKA (intégré), FL Studio, Equalizer APO ou aucun
 
 Au premier lancement, REKA affiche un **menu de sélection** : l'édition de Voicemeeter
 (Potato ou Banana) et l'application qui applique les effets aux strips. Chaque choix
@@ -96,10 +96,20 @@ indique s'il est installé sur le PC et le délai qu'il ajoute à la voix. On le
 | Moteur | Effets | Délai ajouté |
 |---|---|---|
 | **REAPER** | VST2/VST3/CLAP gérés depuis REKA : ajout, bypass, interface, projets | 2 tampons ASIO (insert) + plugins |
+| **REKA (intégré)** | VST2/VST3 64 bits chargés par REKA (reka-host.exe) : ajout, bypass, interface, déplacement | plugins seulement |
 | **FL Studio** | réglés dans FL Studio (le « + » d'une strip l'affiche) | 2 tampons ASIO (insert) + plugins |
 | **Equalizer APO** | plugins VST2 64 bits gérés depuis REKA, appliqués par Windows | plugins seulement |
 | **Aucun** | Voicemeeter seul : volumes, routing, VU | aucun |
 
+- **REKA (intégré)** : rien à installer ni à régler. REKA lance `reka-host.exe` (livré dans
+  REKA.exe), qui charge les plugins et se branche dans Voicemeeter par son *audio callback* :
+  le son de chaque entrée passe par sa chaîne d'effets dans le même bloc, sans pilote ASIO.
+  Un seul programme peut utiliser cet audio callback à la fois. Les plugins proposés sont
+  ceux des dossiers VST3 et VST standards (et ceux de `vst.extra_dirs`), « Parcourir… » pour
+  un autre. Les chaînes et les réglages de chaque plugin sont enregistrés dans
+  `%APPDATA%\REKA\chains.json` et partent dans les `.reka`. Si un plugin plante, REKA
+  relance le moteur avec les dernières chaînes ; après plusieurs plantages rapprochés, il
+  s'arrête et le signale (retire le plugin fautif). Journal : `reka-host.log`.
 - **FL Studio** : REKA le lance (masqué) sur le projet choisi dans ⚙ → Général et le ferme
   en partant. Dans FL Studio, choisis *Voicemeeter Insert Virtual ASIO* (Options → Audio
   settings), puis une piste du mixer par strip, entrée et sortie sur les canaux d'insert de
@@ -390,6 +400,22 @@ python -m pytest tests    # tests (le pont Lua est testé si lua5.4 est install�
 python -m PyInstaller --noconfirm --clean build.spec   # → dist\REKA.exe
 ```
 
+Moteur intégré (Visual Studio 2022 ou MinGW, CMake 3.21+) : `build.spec` l'embarque s'il
+est dans `engine\reka-host.exe`.
+
+```
+cd reaper_mixer\native\reka-host
+cmake -S . -B build -A x64
+cmake --build build --config Release
+copy build\Release\reka-host.exe ..\..\engine\
+```
+
+Les tests `tests/test_reka_host_native.py` pilotent le vrai `reka-host.exe` avec un vrai
+plugin VST2 (`reka-test-gain.dll`) et un faux Voicemeeter qui envoie un signal connu : ils
+tournent sous Windows, ou sous Linux avec Wine (variables `REKA_HOST_EXE`,
+`REKA_TEST_PLUGIN`, `REKA_FAKE_VOICEMEETER`). `python main.py --demo --host reka` montre la
+console avec un moteur intégré simulé.
+
 Avec le Python du Microsoft Store, `pip` peut échouer sur des chemins trop longs : active
 les chemins longs (PowerShell administrateur, puis rouvre le terminal) :
 
@@ -407,13 +433,16 @@ reaper_mixer/
 │   ├── process_manager.py  moteurs (recherche, lancement, masquage, arrêt), projet REAPER
 │   ├── voicemeeter_ctrl.py faders, mutes, routing, envois, insert, VU (30 Hz)
 │   ├── reaper_ctrl.py      liaison avec le pont Lua (effets, pistes, projet, carte son)
+│   ├── reka_host.py        moteur intégré : lancement de reka-host.exe, protocole, chains.json
+│   ├── reka_engine_fake.py faux reka-host (démo, tests) : référence lisible du protocole
 │   ├── vst_scanner.py      liste des plugins (REAPER, cache, dossiers VST3)
 │   ├── engine_load.py      charge CPU / GPU / mémoire du moteur d'effets
 │   ├── media.py            musique en cours (contrôles média de Windows, WinRT)
 │   └── demo.py             moteurs simulés (--demo, --selftest)
 ├── ui/                     fenêtre, strips, master, knob/fader/VU dessinés, dialogues
 ├── assets/                 logo et icône REKA, police Inter, pont Lua
-├── tests/                  tests (logique, pont Lua, interface, Win32)
+├── native/reka-host/       moteur intégré en C++ (VST2, VST3, audio callback de Voicemeeter)
+├── tests/                  tests (logique, pont Lua, interface, Win32, vrai reka-host)
 ├── config.json
 ├── requirements.txt
 └── build.spec
