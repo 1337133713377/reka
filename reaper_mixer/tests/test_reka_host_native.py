@@ -63,6 +63,14 @@ def _wait(app, predicate, timeout=30.0):
     return predicate()
 
 
+def _saved_gain(path: Path, strip: int) -> float | None:
+    """Réglage du premier plugin d'une strip dans chains.json (None pendant une écriture)."""
+    try:
+        return _gain(json.loads(path.read_text())["strips"][strip]["fx"][0]["state"])
+    except (OSError, ValueError, KeyError, IndexError):
+        return None
+
+
 def _gain(state_b64: str) -> float:
     data = base64.b64decode(state_b64)
     assert data[:4] == b"RKP2"           # réglages = valeurs des paramètres
@@ -96,9 +104,14 @@ def test_real_host_with_real_plugin(qapp, cfg, tmp_path):
         assert _wait(qapp, lambda: len(host.strip_tracks[3].fx) == 1
                      and not host.strip_tracks[3].fx[0].enabled)
 
+        def saved_copy_disabled():
+            try:
+                fx = json.loads(host.chains_file.read_text())["strips"][3]["fx"]
+            except (OSError, ValueError):
+                return False
+            return bool(fx) and fx[0]["enabled"] is False
         host.save_project()
-        assert _wait(qapp, lambda: host.chains_file.is_file()
-                     and json.loads(host.chains_file.read_text())["strips"][3]["fx"])
+        assert _wait(qapp, saved_copy_disabled)
         saved = json.loads(host.chains_file.read_text())
         first, copy = saved["strips"][0]["fx"][0], saved["strips"][3]["fx"][0]
         assert first["name"] == "REKA Test Gain" and first["vendor"] == "REKA"
@@ -132,8 +145,7 @@ def test_real_host_with_real_plugin(qapp, cfg, tmp_path):
         host.start()
         assert _wait(qapp, lambda: host.is_connected and host.strip_tracks[3].fx, 60)
         host.save_project()
-        assert _wait(qapp, lambda: _gain(json.loads((tmp_path / "chains.json").read_text())
-                                         ["strips"][3]["fx"][0]["state"]) == pytest.approx(0.25))
+        assert _wait(qapp, lambda: _saved_gain(tmp_path / "chains.json", 3) == pytest.approx(0.25))
     finally:
         host.close(save_project=False)
     log = (tmp_path / "reka-host.log").read_text(encoding="utf-8", errors="replace")

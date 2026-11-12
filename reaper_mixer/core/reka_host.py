@@ -272,7 +272,16 @@ def load_chains_file(path: Path, count: int) -> dict:
 def save_chains_file(path: Path, doc: dict) -> None:
     tmp = path.with_name(path.name + ".tmp")
     tmp.write_text(json.dumps(doc, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
-    os.replace(tmp, path)
+    # Windows refuse de remplacer un fichier ouvert ailleurs à cet instant
+    # (antivirus, indexation, éditeur) : on réessaie un court moment
+    for attempt in range(20):
+        try:
+            os.replace(tmp, path)
+            return
+        except PermissionError:
+            if attempt == 19:
+                raise
+            time.sleep(0.05)
 
 
 # --------------------------------------------------------------------------- #
