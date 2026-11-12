@@ -6,8 +6,10 @@ Fenêtre « comme Voicemeeter » : taille compacte par défaut (strips + master,
 sans grand vide), position et taille mémorisées, réduction possible dans la
 zone de notification (icône à côté de l'horloge).
 
-Aussi : volume par application (bouton « Apps » des strips virtuelles) et
-mises à jour (vérification au démarrage puis régulière, pill dans le Master).
+Aussi : volume par application (bouton « Apps » des strips virtuelles),
+mises à jour (vérification au démarrage puis régulière, pill dans le Master),
+Discord (Rich Presence, micro synchronisé avec le Muet d'une strip) et
+export / import de toute la config dans un fichier .reka.
 """
 
 from __future__ import annotations
@@ -23,13 +25,16 @@ from PySide6.QtGui import QAction, QColor, QPainter, QPixmap, QRadialGradient
 from PySide6.QtWidgets import (QApplication, QGraphicsOpacityEffect, QHBoxLayout, QLabel,
                                QMainWindow, QMenu, QMessageBox, QSystemTrayIcon, QWidget)
 from shiboken6 import delete as delete_now
+from shiboken6 import isValid
 
-from core import config
+from core import backup, config
 from core.app_volume import AppVolumeBackend, NullAppVolumes
+from core.discord_rpc import (TOKEN_KEYS, DiscordBackend, DiscordSettings, DiscordStatus, MuteLink,
+                              Presence, mute_direction, presence_from_config)
 from core.effects import HOST_APO, HOST_NONE, HOST_REAPER
 from core.engine_load import EngineLoadMonitor
 from core.media import MediaBackend, NullMedia
-from core.process_manager import is_blank_project, reaper_project
+from core.process_manager import installed_voicemeeter_kinds, is_blank_project, reaper_project
 from core.updater import UpdateChecker, UpdateInfo
 from core.voicemeeter_ctrl import DEFAULT_ROUTING, MixerLevels, MixerParams
 from ui import styles
@@ -63,6 +68,7 @@ MEASURE_WINDOW_MS = 2500      # mesure d'un plugin : durée de chaque relevé (a
 MEASURE_SETTLE_MS = 500       # … et pause après sa désactivation
 UPDATE_FIRST_CHECK_MS = 8000  # première vérification des mises à jour après l'ouverture
 DEFAULT_UPDATE_HOURS = 6
+EXPORT_SAVE_MS = 1200         # export : le temps que REAPER enregistre son projet
 
 
 def background_image_path(cfg: dict) -> Path | None:
@@ -202,9 +208,14 @@ class MainWindow(QMainWindow):
     def __init__(self, cfg: dict, vm, reaper, processes, persist: bool = True,
                  apps: AppVolumeBackend | None = None, updater: UpdateChecker | None = None,
                  media: MediaBackend | None = None, load: EngineLoadMonitor | None = None,
-                 parent: QWidget | None = None) -> None:
+                 discord: DiscordBackend | None = None, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._cfg = cfg
+        self._discord = discord or DiscordBackend()     # sans moteur : Discord désactivé
+        self._mute_link = MuteLink(mute_direction(cfg))
+        self._discord_mute: bool | None = None          # micro de Discord, s'il est synchronisé
+        self._started_at = int(time.time())
+        self._keep_state = False         # config importée : l'état de la console n'y est plus écrit
         self._load = load                # charge CPU / GPU du moteur d'effets (None : pas mesurée)
         self._fx_costs: dict[str, float] = {}   # charge mesurée par plugin (% d'un cœur)
         self._measuring = False
@@ -305,6 +316,13 @@ class MainWindow(QMainWindow):
             vm.set_label(strip.index, strip.strip_name())
         vm.start_polling()
 
+        # Discord : Rich Presence et micro synchronisé
+        self._discord.muteChanged.connect(self._on_discord_mute)
+        self._discord.statusChanged.connect(self._on_discord_status)
+        self._discord.tokensChanged.connect(self._on_discord_tokens)
+        self._discord.set_presence(self._presence())
+        self._discord.start()
+
         # Volume par application : nombre d'applications sur chaque bouton « Apps »
         self._app_timer = QTimer(self)
         self._app_timer.setInterval(APP_COUNT_MS)
@@ -359,6 +377,7 @@ class MainWindow(QMainWindow):
         for strip, strip_params in zip(self.strips, params.strips):
             strip.set_params(strip_params)
         self.master.set_headphone(params.headphone_gain)
+        self._sync_mute(params)
 
     def _on_levels(self, levels: MixerLevels) -> None:
         for strip, strip_levels in zip(self.strips, levels.strips):
@@ -496,6 +515,114 @@ class MainWindow(QMainWindow):
         else:
             self._media.stop()
         self.master.media.setVisible(show)
+
+    # --------------------------------------------------------------- Discord
+    def _presence(self) -> Presence:
+        """Ce que le profil Discord affiche : les deux lignes des réglages (une
+        ligne 2 vide montre les moteurs de la session), depuis le lancement."""
+        label = getattr(getattr(self._vm, "edition", None), "label", "Voicemeeter").split(" (")[0]
+        if self._reaper.kind != HOST_NONE:
+            label += f" · {self._reaper.label}"
+        return presence_from_config(self._cfg, label, self._started_at)
+
+    def _mute_strip(self) -> int | None:
+        """Strip dont le Muet suit le micro de Discord, ou None (option coupée)."""
+        section = self._cfg.get("discord") or {}
+        if not section.get("mute_sync"):
+            return None
+        try:
+            index = int(section.get("mute_strip", 0) or 0)
+        except (TypeError, ValueError):
+            index = 0
+        return index if 0 <= index < len(self.strips) else None
+
+    def _sync_mute(self, params: MixerParams) -> None:
+        index = self._mute_strip()
+        if index is not None and index < len(params.strips):
+            self._apply_mute(self._mute_link.reka_changed(params.strips[index].mute))
+
+    def _on_discord_mute(self, mute: bool) -> None:
+        self._discord_mute = mute
+        if self._mute_strip() is not None:
+            self._apply_mute(self._mute_link.discord_changed(mute))
+
+    def _apply_mute(self, action: tuple[str, bool] | None) -> None:
+        if action is None:
+            return
+        target, mute = action
+        index = self._mute_strip()
+        if target == "discord":
+            self._discord_mute = mute
+            self._discord.set_mute(mute)
+        elif index is not None:
+            self._vm.set_mute(index, mute)
+
+    def _on_discord_status(self, status: DiscordStatus) -> None:
+        if not status.voice:
+            self._discord_mute = None
+            self._mute_link.discord_lost()
+
+    def _on_discord_tokens(self, tokens: dict) -> None:
+        """Jeton d'autorisation de Discord : gardé pour ne pas redemander à chaque lancement."""
+        section = self._cfg.setdefault("discord", {})
+        for key in TOKEN_KEYS:
+            section[key] = tokens.get(key, 0 if key == "token_expires" else "")
+        self._save_config()
+
+    def apply_discord(self) -> None:
+        """Réglages Discord modifiés : appliqués tout de suite."""
+        self._discord.configure(DiscordSettings.from_config(self._cfg))
+        self._discord.set_presence(self._presence())
+        # Canal ou sens changé : les deux états sont comparés de nouveau
+        self._mute_link.reset(mute_direction(self._cfg))
+        if self._params is not None:
+            self._sync_mute(self._params)
+        if self._discord_mute is not None and self._mute_strip() is not None:
+            self._apply_mute(self._mute_link.discord_changed(self._discord_mute))
+
+    # ------------------------------------------------- export / import de la config
+    def export_config(self, path: str | Path, done=None) -> None:
+        """Écrit toute la config dans un fichier .reka. `done(ok, message)` est
+        appelé à la fin : REAPER enregistre d'abord son projet (chaînes d'effets)."""
+        target = Path(path)
+        if target.suffix.lower() != backup.EXTENSION:
+            target = target.with_name(target.name + backup.EXTENSION)
+        self._store_state()
+        host, project, wait = self._reaper, None, 0
+        if host.kind == HOST_REAPER and host.project_path:
+            project = Path(host.project_path)
+            if self._reaper_ok:
+                host.save_project()
+                wait = EXPORT_SAVE_MS
+
+        def write() -> None:
+            try:
+                saved = backup.export_backup(running_config(self._cfg, self._vm), target, project)
+            except backup.BackupError as exc:
+                ok, message = False, str(exc)
+            else:
+                ok, message = True, f"Config exportée dans « {target.name} » : {saved.describe()}."
+            if done is not None:
+                done(ok, message)
+            else:
+                self.toast.show_message(message)
+
+        QTimer.singleShot(wait, self, write)
+
+    def import_config(self, data: backup.Backup) -> tuple[bool, str]:
+        """Remplace la config par celle d'une sauvegarde (déjà lue et confirmée).
+        Renvoie (réussi, message) ; l'appelant redémarre REKA ensuite."""
+        if not self._persist:
+            return False, "Mode démo : l'import est désactivé."
+        try:
+            report = backup.import_backup(
+                self._cfg, data,
+                installed_voicemeeter_kinds(self._cfg.get("voicemeeter", {}).get("path")))
+        except backup.BackupError as exc:
+            return False, str(exc)
+        self._keep_state = True
+        self._save_config()
+        return True, "\n".join(["Config importée.", *report.notes])
 
     # ------------------------------------------- fenêtres de Voicemeeter / REAPER
     def _engine_visible(self, key: str) -> bool:
@@ -749,7 +876,8 @@ class MainWindow(QMainWindow):
 
     def open_settings(self) -> None:
         dialog = SettingsDialog(self._cfg, self._processes, self._reaper, self._vm, self,
-                                persist=self._persist, updater=self._updater)
+                                persist=self._persist, updater=self._updater,
+                                discord=self._discord)
         dialog.optionsChanged.connect(lambda: self._on_tracks(self._tracks))
         dialog.projectRequested.connect(self.choose_project)
         dialog.appearanceChanged.connect(self.apply_appearance)
@@ -760,6 +888,28 @@ class MainWindow(QMainWindow):
         restart = []
         dialog.restartRequested.connect(lambda: restart.append(True))
         dialog.restartRequested.connect(dialog.accept)
+        dialog.discordChanged.connect(self.apply_discord)
+
+        def export_done(ok: bool, message: str) -> None:
+            if isValid(dialog):       # réglages fermés entre-temps : message dans la console
+                dialog.show_backup_status(ok, message)
+            else:
+                self.toast.show_message(message)
+
+        dialog.exportRequested.connect(lambda path: self.export_config(path, export_done))
+
+        def import_now(data) -> None:
+            ok, message = self.import_config(data)
+            if not ok:
+                dialog.show_backup_status(False, message)
+                return
+            dialog.config_replaced()
+            QMessageBox.information(dialog, "Config importée",
+                                    f"{message}\n\nREKA redémarre pour l'appliquer.")
+            restart.append(True)
+            dialog.accept()
+
+        dialog.importRequested.connect(import_now)
         # « Installer la mise à jour » (onglet À propos) : après la fermeture des réglages
         update = []
         dialog.updateRequested.connect(lambda: update.append(True))
@@ -952,27 +1102,33 @@ class MainWindow(QMainWindow):
         if self._restore_measured is not None:    # mesure en cours : plugin réactivé
             self._restore_measured()
             self._restore_measured = None
-        if self._params is not None:
-            state = self._params.to_state()
-            if not getattr(self._vm, "supports_sends", True):
-                # Banana n'a pas de niveaux d'envoi : on garde ceux réglés sur Potato
-                previous = (self._cfg.get("state") or {}).get("strips", [])
-                for strip, old in zip(state["strips"], previous):
-                    if isinstance(old, dict) and "sends" in old:
-                        strip["sends"] = old["sends"]
-            self._cfg["state"] = state
+        self._store_state()
         ui_cfg = self._cfg.setdefault("ui", {})
         ui_cfg["geometry"] = bytes(self.saveGeometry().toBase64()).decode("ascii")
         ui_cfg["layout_version"] = LAYOUT_VERSION    # la taille enregistrée va avec cette disposition
         for legacy in ("width", "height"):   # remplacés par « geometry »
             ui_cfg.pop(legacy, None)
         self._save_config()
+        self._discord.stop()
         self._media.stop()
         if self._load is not None:
             self._load.stop()
         if self._tray is not None:
             self._tray.hide()
         super().closeEvent(event)
+
+    def _store_state(self) -> None:
+        """État de la console (faders, Muets, envois…) rangé dans la config."""
+        if self._params is None or self._keep_state:
+            return
+        state = self._params.to_state()
+        if not getattr(self._vm, "supports_sends", True):
+            # Banana n'a pas de niveaux d'envoi : on garde ceux réglés sur Potato
+            previous = (self._cfg.get("state") or {}).get("strips", [])
+            for strip, old in zip(state["strips"], previous):
+                if isinstance(old, dict) and "sends" in old:
+                    strip["sends"] = old["sends"]
+        self._cfg["state"] = state
 
     def _save_config(self) -> None:
         if not self._persist:

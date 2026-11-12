@@ -79,7 +79,7 @@ sur son insert (désactivable dans ⚙ → Options).
 | Badge de connexion | vert = tout répond ; rouge = le moteur d'effets ou Voicemeeter ne répond plus |
 | Bouton Projet | projet REAPER ouvert, clic pour en changer ; FL Studio / Equalizer APO : l'ouvrir |
 | Bouton – (Master) | réduire REKA (barre des tâches, ou zone de notification si activé) |
-| Bouton ⚙ (Master) | réglages : Général, Canaux, Audio, Apparence, Couleurs, À propos |
+| Bouton ⚙ (Master) | réglages : Général, Canaux, Audio, Apparence, Couleurs, Discord, À propos |
 
 `REKA.exe --demo` ouvre la console avec des moteurs simulés (sans Voicemeeter ni REAPER)
 pour la découvrir ; `--demo --host flstudio` (ou `apo`, `none`) montre les autres moteurs
@@ -112,6 +112,59 @@ indique s'il est installé sur le PC et le délai qu'il ajoute à la voix. On le
   REKA écrit `reka.txt` dans le dossier `config` d'Equalizer APO et ajoute une seule ligne
   `Include: reka.txt` à `config.txt` : le reste de ta configuration n'est pas touché. Les
   réglages des plugins faits dans l'éditeur d'Equalizer APO sont conservés.
+
+## Discord : Rich Presence et micro synchronisé
+
+⚙ → **Discord**. REKA parle au client Discord installé sur le PC (son canal local) : rien ne
+passe par un serveur de REKA.
+
+- **Rich Presence** : ton profil affiche « Joue à REKA », deux lignes de texte (*Ligne 1* et
+  *Ligne 2*, « Vst » et « talking » par défaut ; une ligne 2 vide montre les moteurs utilisés,
+  « Voicemeeter Potato · REAPER »), depuis combien de temps, et un bouton *Télécharger REKA*.
+  Rien d'autre n'est envoyé. Décoche la case pour le couper ; l'activité disparaît tout de suite.
+- **Micro synchronisé** : le **Muet** d'un canal (le micro par défaut) et le micro barré de
+  Discord se suivent. *Sens* : dans les deux sens, REKA → Discord seulement, ou Discord → REKA
+  seulement. Au lancement, c'est l'état de REKA qui est repris (sauf dans le dernier sens).
+
+La **Rich Presence marche sans rien régler** : REKA utilise son application Discord (celle
+dont le nom s'affiche après « Joue à », et qui porte l'image `reka`). Le **micro synchronisé**
+demande la tienne :
+
+1. [discord.com/developers](https://discord.com/developers/applications) → **New Application**,
+   nomme-la « REKA ». Copie son **Application ID** dans ⚙ → Discord. Pour l'image du profil,
+   ajoute une image nommée `reka` dans *Rich Presence → Art Assets*.
+2. Onglet **OAuth2** → ajoute la redirection `http://localhost`, puis **Reset Secret** et
+   copie le **Client Secret** dans ⚙ → Discord.
+3. Coche *Synchroniser le Muet…* : Discord ouvre une fenêtre pour autoriser REKA, une seule
+   fois (le jeton est gardé dans `config.json`, et renouvelé tout seul).
+
+Pourquoi sa propre application ? Discord réserve la lecture et le réglage du micro aux
+applications qu'il a approuvées, et au propriétaire d'une application (plus les testeurs
+qu'il y inscrit, dans *App Testers*). Le Client Secret reste sur le PC : il n'est jamais
+exporté avec la config. Un refus ou un réglage manquant est expliqué dans l'onglet, avec le
+bouton **Autoriser dans Discord** pour réessayer.
+
+## Export et import de la config
+
+⚙ → **Général** → *Sauvegarde de la config*.
+
+- **Exporter…** écrit un seul fichier `.reka` : thème et couleurs, image d'arrière-plan, noms
+  des canaux, routing, état de la console (faders, Muets, envois, Intellipan), options, et le
+  **projet REAPER** ouvert, enregistré juste avant (donc les chaînes d'effets et les réglages
+  des plugins).
+- **Importer…** montre ce que contient le fichier, demande confirmation, remplace les
+  réglages puis redémarre REKA. Les réglages d'avant sont gardés dans
+  `%APPDATA%\REKA\avant-import.reka`, réimportable pour revenir en arrière.
+
+Ce qui est propre au PC n'est ni exporté, ni touché par un import : chemins de Voicemeeter,
+REAPER et FL Studio, taille de la fenêtre, et les secrets Discord. Un fichier `.reka` peut
+donc être partagé. À l'import :
+
+- le projet REAPER est copié dans le dossier de REKA sous le nom « … (importé) » et devient
+  le projet par défaut ; ses plugins doivent être installés sur le PC ;
+- si l'édition de Voicemeeter de la sauvegarde (Potato / Banana) n'est pas installée, REKA
+  garde l'édition actuelle, et n'importe pas le projet REAPER (câblé pour l'autre édition) ;
+- le projet FL Studio n'est pas dans la sauvegarde : il reste géré par FL Studio.
 
 ## Entrées et sorties
 

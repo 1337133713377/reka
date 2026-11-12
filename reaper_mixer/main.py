@@ -48,6 +48,7 @@ from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox, QSplashScr
 
 from core import config
 from core.app_volume import create_backend
+from core.discord_rpc import create_discord_backend
 from core.media import create_media_backend
 from core.process_manager import (AppNotInstalledError, OtherEditionRunningError, ProcessManager,
                                   ProcessManagerError, StartupAborted,
@@ -397,7 +398,8 @@ class MixerApp:
                                       reaper=self._host, processes=self._processes,
                                       apps=create_backend(self._cfg), updater=self._updater,
                                       media=create_media_backend(self._cfg),
-                                      load=create_monitor(self._processes, self._host))
+                                      load=create_monitor(self._processes, self._host),
+                                      discord=create_discord_backend(self._cfg))
             if self._host.kind != HOST_REAPER:
                 self._host.start()    # FL Studio, Equalizer APO : dans le thread UI
         except Exception as exc:
@@ -700,13 +702,15 @@ def run_demo(app: QApplication, cfg: dict, selftest: str | None, host: str | Non
     """Console avec des moteurs simulés ; avec --selftest, capture puis quitte."""
     from core.app_volume import DemoAppVolumes
     from core.demo import DemoLoad, DemoProcesses, DemoVoicemeeter
+    from core.discord_rpc import DemoDiscord, DiscordSettings
     from core.media import DemoMedia
 
     vm, processes = DemoVoicemeeter(cfg), DemoProcesses()
     reaper = demo_host(cfg, host, processes)
     load = EngineLoadMonitor(DemoLoad(reaper)) if reaper.kind != HOST_NONE else None
     window = MainWindow(cfg=cfg, vm=vm, reaper=reaper, processes=processes, persist=False,
-                        apps=DemoAppVolumes(), media=DemoMedia(), load=load)
+                        apps=DemoAppVolumes(), media=DemoMedia(), load=load,
+                        discord=DemoDiscord(DiscordSettings.from_config(cfg)))
     if reaper.kind != HOST_REAPER:
         reaper.start()
     if selftest is None:

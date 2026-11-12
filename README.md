@@ -25,7 +25,7 @@ Voicemeeter pour le son, tes plugins VST pour les effets, **une seule fenêtre**
 
 <br><br>
 
-[Aperçu](#apercu) · [Démarrer](#demarrer) · [Fonctions](#fonctions) · [Thèmes](#themes) · [Moteurs d'effets](#moteurs) · [Aide](#aide)
+[Aperçu](#apercu) · [Démarrer](#demarrer) · [Fonctions](#fonctions) · [Thèmes](#themes) · [Discord](#discord) · [Moteurs d'effets](#moteurs) · [Aide](#aide)
 
 </div>
 
@@ -83,6 +83,29 @@ Discord, Spotify, ton jeu, ton navigateur : chacun son volume et son mute, **dep
 ### 🎨 Douze thèmes
 
 Synthwave, Matrix, Sakura, Braise… ou **ta couleur pour chaque élément** et ton image de fond.
+
+</td>
+</tr>
+<tr>
+<td valign="top">
+
+### 🎮 « Joue à REKA »
+
+Ton profil Discord montre que tu mixes avec REKA. **Désactivable** en un clic.
+
+</td>
+<td valign="top">
+
+### 🎙️ Micro synchronisé
+
+Coupe ton micro dans REKA : le **micro barré s'affiche dans Discord**, et l'inverse.
+
+</td>
+<td valign="top">
+
+### 💾 Toute ta config dans un fichier
+
+**Exporte et importe** thème, canaux, routing et chaînes d'effets : un seul fichier `.reka`.
 
 </td>
 </tr>
@@ -240,6 +263,21 @@ Un clic dans ⚙ → **Apparence** et toute la console change : couleurs, faders
 
 <br>
 
+<a id="discord"></a>
+
+## 🎮 Discord et sauvegarde
+
+| | Où | Ce que ça fait |
+|---|---|---|
+| **Rich Presence** | ⚙ → Discord | « Joue à REKA » sur ton profil, avec un bouton pour la télécharger. Une case pour le couper. |
+| **Micro synchronisé** | ⚙ → Discord | Le Muet d'un canal et le micro de Discord se suivent, dans le sens que tu choisis. |
+| **Export / import** | ⚙ → Général | Toute ta config dans un fichier `.reka` : pour changer de PC, réinstaller Windows ou partager tes réglages. |
+
+> [!NOTE]
+> La Rich Presence marche sans rien régler. Le micro synchronisé demande une **application Discord** à ton nom (gratuite, 2 minutes) : Discord réserve ce réglage au propriétaire de l'application, chacun crée donc la sienne. L'onglet ⚙ → Discord explique les étapes.
+
+<br>
+
 <a id="moteurs"></a>
 
 ## 🔌 Quatre moteurs d'effets au choix
@@ -309,7 +347,7 @@ Toutes seules. REKA vérifie au démarrage puis régulièrement ; quand une vers
 
 <br>
 
-Dans `%APPDATA%\REKA` : `config.json` pour les réglages, `app.log` pour le journal. Raccourci : ⚙ → *Ouvrir le dossier des journaux*.
+Dans `%APPDATA%\REKA` : `config.json` pour les réglages, `app.log` pour le journal. Raccourci : ⚙ → *Ouvrir le dossier des journaux*. Pour les emporter sur un autre PC : ⚙ → **Général** → *Exporter…*
 
 </details>
 

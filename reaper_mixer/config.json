@@ -76,5 +76,18 @@
     "colors": {},
     "strip_names": ["Microphone", "Musique", "Appels", "Bureau", "Autres 1", "Autres 2"]
   },
+  "discord": {
+    "rich_presence": true,
+    "details": "Vst",
+    "state": "talking",
+    "mute_sync": false,
+    "mute_strip": 0,
+    "mute_direction": "both",
+    "client_id": "",
+    "client_secret": "",
+    "access_token": "",
+    "refresh_token": "",
+    "token_expires": 0
+  },
   "state": {}
 }

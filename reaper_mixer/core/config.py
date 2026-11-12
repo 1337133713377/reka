@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any
 
 APP_NAME = "REKA"
-APP_VERSION = "0.7.0"
+APP_VERSION = "0.8.0"
 APP_AUTHORS = "Regrettable et Zerka"   # développeurs
 APP_THANKS = "206"                     # remerciements pour sa contribution
 CONFIG_FILENAME = "config.json"
@@ -99,6 +99,11 @@ def user_config_path() -> Path:
 # --------------------------------------------------------------------------- #
 # Lecture / écriture
 # --------------------------------------------------------------------------- #
+def default_config() -> dict[str, Any]:
+    """Valeurs par défaut livrées avec l'application."""
+    return _read_json(resource_path(CONFIG_FILENAME))
+
+
 def load_config() -> dict[str, Any]:
     """Charge la config : défauts livrés + surcharge utilisateur.
 
@@ -106,7 +111,7 @@ def load_config() -> dict[str, Any]:
     (installation cassée). Une config utilisateur corrompue est mise de côté
     et remplacée par les défauts, sans bloquer le démarrage.
     """
-    defaults = _read_json(resource_path(CONFIG_FILENAME))
+    defaults = default_config()
 
     user_path = user_config_path()
     user: dict[str, Any] = {}
