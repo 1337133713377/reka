@@ -2,7 +2,7 @@
 
 <img src="reaper_mixer/assets/reka_mark.png" alt="REKA" width="340">
 
-# REKA
+#  REKA
 
 ### La console de mixage tout-en-un pour Windows
 
