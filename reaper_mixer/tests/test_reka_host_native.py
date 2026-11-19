@@ -209,3 +209,39 @@ def test_real_host_processes_voicemeeter_audio(qapp, cfg, tmp_path):
         assert _wait(qapp, lambda: abs(_read_output(out).get(0, -9) - 0.01) < 1e-5, 20)
     finally:
         host.close(save_project=False)
+
+
+@pytest.mark.skipif(not FAKE_VM.is_file(), reason="faux Voicemeeter absent")
+def test_real_host_listening_on_headphone_bus(qapp, cfg, tmp_path):
+    """Écoute au casque seule (autre moteur d'effets) : le bus du casque (A2 ici,
+    canaux 8 à 15 des sorties) est égalisé puis mixé en stéréo ; les autres bus
+    passent tels quels. Sortie du canal c = (c + 1) / 100."""
+    from core import listening
+
+    cfg["voicemeeter"]["headphone_bus"] = "A2"
+    listening.set_profile(cfg, "Test", "test", listening.HeadphoneEq(
+        -6.0206, (listening.EqFilter("PK", 1000, 0.0, 1.0),)))       # ×0,5, son inchangé sinon
+    out = tmp_path / "vm-bus.txt"
+    env = {"REKA_VOICEMEETER_DLL": windows_path(FAKE_VM),
+           "FAKE_VOICEMEETER_OUT_BUS": windows_path(out)}
+    controller = listening.ListenController(cfg, None, launcher=launcher(tmp_path, env))
+    try:
+        controller.start()
+        assert _wait(qapp, lambda: controller.status().ok, 60), controller.status().text
+
+        def expected(changes):
+            want = {c: (c + 1) / 100 for c in range(64)}
+            want.update(changes)
+            return lambda: all(abs(_read_output(out).get(c, -9) - v) < 1e-4 for c, v in want.items())
+        assert _wait(qapp, expected({c: (c + 1) / 200 for c in range(8, 16)}), 20), _read_output(out)
+
+        # Surround à 0 % : mixage stéréo classique du 7.1, puis égalisation
+        listening.set_option(cfg, "surround", "enabled", True)
+        listening.set_option(cfg, "surround", "amount", 0.0)
+        controller.apply()
+        left = 0.5 * (0.09 + 0.70710678 * (0.11 + 0.12 + 0.13 + 0.15))
+        right = 0.5 * (0.10 + 0.70710678 * (0.11 + 0.12 + 0.14 + 0.16))
+        changes = {8: left, 9: right, **{c: 0.0 for c in range(10, 16)}}
+        assert _wait(qapp, expected(changes), 20), _read_output(out)
+    finally:
+        controller.close()

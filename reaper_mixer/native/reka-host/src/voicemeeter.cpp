@@ -81,16 +81,17 @@ bool Voicemeeter::open(const std::string& client, std::string& error) {
     return true;
 }
 
-bool Voicemeeter::startCallback(std::string& error) {
+bool Voicemeeter::startCallback(long mode, std::string& error) {
     if (!loggedIn_) {
         error = "pas connecté à Voicemeeter";
         return false;
     }
+    if (registered_ && mode != mode_) stopCallback();   // autres modes : nouvel enregistrement
     if (!registered_) {
         char name[64] = {};
         std::strncpy(name, client_.c_str(), sizeof(name) - 1);
         logLine("enregistrement de l'audio callback");
-        long status = register_(kVmModeInput, &Voicemeeter::callback, this, name);
+        long status = register_(mode, &Voicemeeter::callback, this, name);
         if (status == 1) {
             error = std::string("l'audio callback de Voicemeeter est déjà utilisé par « ") + name +
                     " » : ferme ce programme";
@@ -101,6 +102,7 @@ bool Voicemeeter::startCallback(std::string& error) {
             return false;
         }
         registered_ = true;
+        mode_ = mode;
     }
     logLine("démarrage de l'audio callback");
     long status = start_();
@@ -148,6 +150,9 @@ long __stdcall Voicemeeter::callback(void* user, long command, void* data, long)
             break;
         case kVmCommandBufferIn:
             if (self->onBuffer) self->onBuffer(static_cast<VmAudioBuffer*>(data));
+            break;
+        case kVmCommandBufferOut:
+            if (self->onBufferOut) self->onBufferOut(static_cast<VmAudioBuffer*>(data));
             break;
         default:
             break;

@@ -3,13 +3,19 @@
 // Lancé par REKA (core/reka_host.py) avec --port et --token : il se connecte à
 // REKA en TCP sur 127.0.0.1, se présente, puis reçoit une commande JSON par
 // ligne (setup, load, add_fx, remove_fx, move_fx, fx_enabled, chain_enabled,
-// toggle_ui, rename, get_chains, quit) et renvoie l'état de ses chaînes.
+// toggle_ui, rename, listen, get_chains, quit) et renvoie l'état de ses chaînes.
+//
+// Écoute au casque (commande « listen ») : surround virtuel et égalisation du
+// casque, sur le bus du casque (mode « sorties » de l'audio callback). Elle
+// marche aussi sans aucune strip : REKA lance alors l'hôte pour l'écoute
+// seule, quel que soit le moteur d'effets choisi.
 //
 // Fils :
 //   - principal : fenêtres (interfaces des plugins), commandes, plugins ;
 //   - lecture du socket : découpe les lignes et les confie au fil principal ;
-//   - audio (Voicemeeter) : traite les strips, sans jamais attendre : si une
-//     chaîne est en cours de modification, le bloc passe sans effets.
+//   - audio (Voicemeeter) : traite les strips et le bus du casque, sans jamais
+//     attendre : si une chaîne est en cours de modification, le bloc passe
+//     sans effets.
 //
 // Si REKA disparaît (socket fermé), l'hôte s'arrête de lui-même.
 #ifndef WIN32_LEAN_AND_MEAN
@@ -27,6 +33,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <cstring>
 #include <deque>
 #include <memory>
@@ -37,6 +44,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include "listen.h"
 #include "plugin.h"
 #include "voicemeeter.h"
 
@@ -45,7 +53,7 @@ using json = nlohmann::json;
 namespace reka {
 namespace {
 
-constexpr const char* kVersion = "0.1.0";
+constexpr const char* kVersion = "0.2.0";
 constexpr int kProtocol = 1;
 constexpr UINT WM_APP_LINE = WM_APP + 1;
 constexpr UINT WM_APP_DISCONNECTED = WM_APP + 2;
@@ -103,6 +111,7 @@ private:
     void cmdRemove(const json& command);
     void cmdMove(const json& command);
     void cmdToggleUi(const json& command);
+    void cmdListen(const json& listen, bool restart = true);
     json chains();
 
     // ---- plugins
@@ -115,8 +124,11 @@ private:
     std::wstring windowTitle(const Strip& strip, const Slot& slot) const;
 
     // ---- audio
+    long wantedMode() const;
     void startAudio();
+    void rebuildListen();
     void processBuffer(VmAudioBuffer* buffer);
+    void processBufferOut(VmAudioBuffer* buffer);
 
     // ---- fenêtres
     static LRESULT CALLBACK messageProc(HWND, UINT, WPARAM, LPARAM);
@@ -133,6 +145,13 @@ private:
 
     std::mutex chainLock_;  // modifie les chaînes (le fil audio n'attend jamais)
     std::vector<Strip> strips_;
+
+    // Écoute au casque : réglages (fil principal) et traitement (fil audio)
+    ListenSettings listenSettings_;
+    int listenChannel_ = 0;     // premier canal du bus du casque (sorties de Voicemeeter)
+    int listenChannels_ = 8;
+    std::mutex listenLock_;
+    std::unique_ptr<ListenProcessor> listen_;
 
     Voicemeeter voicemeeter_;
     bool voicemeeterOpen_ = false;
@@ -237,6 +256,10 @@ void Host::sendState() {
             {"samplerate", rate_.load()},
             {"blocksize", block_.load()},
             {"message", running_ ? "" : audioMessage_}}},
+          {"listen", {{"active", listenSettings_.active()},
+                      {"eq", listenSettings_.eq},
+                      {"surround", listenSettings_.surround},
+                      {"channel", listenChannel_}}},
           {"strips", strips}});
 }
 
@@ -295,6 +318,8 @@ void Host::handle(const json& command) {
             std::lock_guard<std::mutex> lock(chainLock_);
             s->enabled = command.value("enabled", true);
         }
+    } else if (cmd == "listen") {
+        cmdListen(arg(command, "listen"));
     } else if (cmd == "rename") {
         if (Strip* s = strip(arg(command, "strip"))) {
             s->name = command.value("name", s->name);
@@ -330,7 +355,53 @@ void Host::cmdSetup(const json& command) {
             s.right.assign((size_t)block, 0.0f);
         }
     }
+    cmdListen(arg(command, "listen"), false);
     startAudio();
+}
+
+void Host::cmdListen(const json& listen, bool restart) {
+    if (!listen.is_object()) return;
+    ListenSettings settings;
+    settings.eq = listen.value("eq", false);
+    settings.preampDb = listen.value("preamp", 0.0);
+    for (const json& item : listen.value("bands", json::array())) {
+        if (!item.is_object() || settings.bands.size() >= kMaxEqBands) continue;
+        EqBand band;
+        std::string type = item.value("type", "PK");
+        if (type == "PK") band.type = EqBand::Peak;
+        else if (type == "LS") band.type = EqBand::LowShelf;
+        else if (type == "HS") band.type = EqBand::HighShelf;
+        else if (type == "LP") band.type = EqBand::LowPass;
+        else if (type == "HP") band.type = EqBand::HighPass;
+        else if (type == "NO") band.type = EqBand::Notch;
+        else continue;
+        band.freq = item.value("freq", 1000.0);
+        band.gainDb = item.value("gain", 0.0);
+        band.q = item.value("q", 0.707);
+        if (!std::isfinite(band.freq) || !std::isfinite(band.gainDb) || !std::isfinite(band.q))
+            continue;
+        settings.bands.push_back(band);
+    }
+    settings.surround = listen.value("surround", false);
+    settings.head = listen.value("head", 1);
+    settings.room = listen.value("room", 1);
+    settings.amount = listen.value("amount", 1.0);
+    if (!std::isfinite(settings.preampDb)) settings.preampDb = 0;
+    if (!std::isfinite(settings.amount)) settings.amount = 1;
+    const long before = wantedMode();
+    listenSettings_ = settings;
+    {
+        std::lock_guard<std::mutex> lock(listenLock_);   // lus par le fil audio
+        listenChannel_ = std::max(0, listen.value("channel", 0));
+        listenChannels_ = std::clamp(listen.value("channels", kListenChannels), 1, kListenChannels);
+    }
+    rebuildListen();
+    if (restart && wantedMode() != before) {
+        logLine(listenSettings_.active() ? "écoute au casque activée" : "écoute au casque coupée");
+        voicemeeter_.stopCallback();
+        running_.store(false);
+        startAudio();
+    }
 }
 
 std::unique_ptr<Slot> Host::makeSlot(const json& fx, std::string& error, bool keepMissing) {
@@ -587,8 +658,34 @@ LRESULT CALLBACK Host::editorProc(HWND window, UINT message, WPARAM wparam, LPAR
 }
 
 // ------------------------------------------------------------------ audio
+long Host::wantedMode() const {
+    return (strips_.empty() ? 0 : kVmModeInput) | (listenSettings_.active() ? kVmModeOutput : 0);
+}
+
+void Host::rebuildListen() {
+    double rate = rate_.load();
+    std::unique_ptr<ListenProcessor> fresh;
+    if (listenSettings_.active() && rate > 0)
+        fresh = std::make_unique<ListenProcessor>(listenSettings_, rate);
+    {
+        std::lock_guard<std::mutex> lock(listenLock_);
+        if (fresh && listen_) fresh->adopt(*listen_);
+        listen_.swap(fresh);
+    }
+    // L'ancien traitement est détruit hors du verrou
+}
+
 void Host::startAudio() {
     std::string error;
+    const long mode = wantedMode();
+    if (mode == 0) {           // ni strip ni écoute : rien à demander à Voicemeeter
+        voicemeeter_.stopCallback();
+        running_.store(false);
+        KillTimer(messages_, kVoicemeeterTimer);
+        audioMessage_ = "écoute au casque désactivée";
+        sendState();
+        return;
+    }
     if (!voicemeeterOpen_) {
         voicemeeter_.onStarted = [this](double rate, int block) {
             rate_.store(rate);
@@ -603,9 +700,10 @@ void Host::startAudio() {
         };
         voicemeeter_.onChanged = [this]() { PostMessageW(messages_, WM_APP_AUDIO_CHANGED, 0, 0); };
         voicemeeter_.onBuffer = [this](VmAudioBuffer* buffer) { processBuffer(buffer); };
+        voicemeeter_.onBufferOut = [this](VmAudioBuffer* buffer) { processBufferOut(buffer); };
         voicemeeterOpen_ = voicemeeter_.open(client_, error);
     }
-    if (voicemeeterOpen_ && voicemeeter_.startCallback(error)) {
+    if (voicemeeterOpen_ && voicemeeter_.startCallback(mode, error)) {
         audioMessage_ = "en attente du son de Voicemeeter";
         KillTimer(messages_, kVoicemeeterTimer);
         logLine("audio callback de Voicemeeter démarré");
@@ -653,6 +751,26 @@ void Host::processBuffer(VmAudioBuffer* buffer) {
     chainLock_.unlock();
 }
 
+void Host::processBufferOut(VmAudioBuffer* buffer) {
+    _mm_setcsr(_mm_getcsr() | 0x8040);
+    const int n = buffer->audiobuffer_nbs;
+    const int channels = std::min<int>(buffer->audiobuffer_nbi, 128);
+    // Le son de chaque bus doit partir vers son périphérique, traité ou non
+    for (int c = 0; c < channels; ++c) {
+        float* r = buffer->audiobuffer_r[c];
+        float* w = buffer->audiobuffer_w[c];
+        if (r && w && r != w) std::memcpy(w, r, sizeof(float) * (size_t)n);
+    }
+    if (!running_.load(std::memory_order_relaxed) && !running_.exchange(true))
+        PostMessageW(messages_, WM_APP_AUDIO_RUNNING, 0, 0);
+    if (!listenLock_.try_lock()) return;   // réglage en cours de changement : bloc tel quel
+    if (listen_ && listenChannel_ < channels) {
+        int count = std::min(listenChannels_, channels - listenChannel_);
+        listen_->process(&buffer->audiobuffer_w[listenChannel_], count, n);
+    }
+    listenLock_.unlock();
+}
+
 // ------------------------------------------------------------------ boucle
 void Host::onTimer(UINT_PTR id) {
     if (id == kVoicemeeterTimer) {
@@ -692,6 +810,7 @@ LRESULT CALLBACK Host::messageProc(HWND window, UINT message, WPARAM wparam, LPA
             logLine("son de Voicemeeter : " + std::to_string((int)self->rate_.load()) + " Hz, " +
                     std::to_string(self->block_.load()) + " échantillons");
             self->prepareAll();
+            self->rebuildListen();     // fréquence connue (ou changée)
             self->sendState();
             return 0;
         case WM_APP_AUDIO_RUNNING:
@@ -745,6 +864,7 @@ int Host::run() {
 
     // Arrêt : plus de son vers les plugins, puis fermeture de tout
     voicemeeter_.close();
+    listen_.reset();
     for (Strip& s : strips_)
         for (auto& fx : s.fx) closeWindow(fx.get());
     strips_.clear();

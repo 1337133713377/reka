@@ -74,6 +74,7 @@ sur son insert (désactivable dans ⚙ → Options).
 | Badge FX ⏻ | bypass de toute la chaîne d'effets de la strip (FL Studio : envoi à l'insert) |
 | Nom de la strip | double-clic ou clic droit pour renommer (renomme aussi la piste REAPER) ; tous les noms : ⚙ → Canaux |
 | Knob Casque | volume du bus A1, par pas de 0,5 dB (molette : un cran = 0,5 dB ; double-clic = 0 dB) |
+| Pastilles EQ / 3D (sous le knob Casque) | égalisation du casque / son surround virtuel, on/off ; réglages dans ⚙ → Écoute (profil AutoEQ de ton casque, pièce, taille de tête, intensité). Traité par reka-host.exe sur le bus du casque (`voicemeeter.headphone_bus`), quel que soit le moteur d'effets |
 | Boutons Voicemeeter / REAPER (Master) | affichent la fenêtre du moteur au premier plan ; re-clic = la recacher (ne la ferme pas avec la croix : le son ou les effets s'arrêteraient) |
 | Musique en cours (Master) | pochette, titre et artiste de ce qui joue (Spotify, Deezer, navigateur…), boutons précédent / lecture-pause / suivant |
 | Badge de connexion | vert = tout répond ; rouge = le moteur d'effets ou Voicemeeter ne répond plus |

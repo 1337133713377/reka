@@ -27,7 +27,7 @@ from PySide6.QtWidgets import (QApplication, QGraphicsOpacityEffect, QHBoxLayout
 from shiboken6 import delete as delete_now
 from shiboken6 import isValid
 
-from core import backup, config
+from core import backup, config, listening
 from core.app_volume import AppVolumeBackend, NullAppVolumes
 from core.discord_rpc import (TOKEN_KEYS, DiscordBackend, DiscordSettings, DiscordStatus, MuteLink,
                               Presence, mute_direction, presence_from_config)
@@ -208,9 +208,11 @@ class MainWindow(QMainWindow):
     def __init__(self, cfg: dict, vm, reaper, processes, persist: bool = True,
                  apps: AppVolumeBackend | None = None, updater: UpdateChecker | None = None,
                  media: MediaBackend | None = None, load: EngineLoadMonitor | None = None,
-                 discord: DiscordBackend | None = None, parent: QWidget | None = None) -> None:
+                 discord: DiscordBackend | None = None, listen=None,
+                 parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._cfg = cfg
+        self._listen = listen            # écoute au casque (core/listening.ListenController)
         self._discord = discord or DiscordBackend()     # sans moteur : Discord désactivé
         self._mute_link = MuteLink(mute_direction(cfg))
         self._discord_mute: bool | None = None          # micro de Discord, s'il est synchronisé
@@ -270,6 +272,8 @@ class MainWindow(QMainWindow):
         self.master.minimizeRequested.connect(self.minimize)
         self.master.updateRequested.connect(self.open_update)
         self.master.engineRequested.connect(self.toggle_engine_window)
+        self.master.listenToggled.connect(self.toggle_listen)
+        self.show_listen()
         # Musique en cours (contrôles média de Windows)
         self.master.media.previousRequested.connect(self._media.previous)
         self.master.media.nextRequested.connect(self._media.next)
@@ -891,10 +895,36 @@ class MainWindow(QMainWindow):
         if answer == QMessageBox.StandardButton.Yes:
             self._reaper.remove_fx(index, fx_index)
 
-    def open_settings(self) -> None:
+    # ------------------------------------------------------------ écoute au casque
+    def show_listen(self) -> None:
+        """Pastilles EQ / 3D du Master, d'après la config."""
+        current = listening.settings(self._cfg)
+        eq = current["eq"]
+        self.master.set_listen(eq["enabled"], current["surround"]["enabled"], bool(eq["filters"]),
+                               eq["name"] or "personnalisée")
+
+    def toggle_listen(self, key: str, on: bool) -> None:
+        """Pastille EQ / 3D cliquée."""
+        if key == "eq" and not listening.settings(self._cfg)["eq"]["filters"]:
+            self.show_listen()           # pas encore de casque choisi : on le choisit d'abord
+            self.open_settings("Écoute")
+            return
+        listening.set_option(self._cfg, "eq" if key == "eq" else "surround", "enabled", bool(on))
+        if self._listen is not None:
+            self._listen.apply()
+        self.show_listen()
+        self._save_config()
+        what = "Égalisation du casque" if key == "eq" else "Son surround virtuel"
+        self.toast.show_message(f"{what} {'allumé' if on else 'éteint'}"
+                                f"{'e' if key == 'eq' else ''}.")
+
+    def open_settings(self, tab: str | None = None) -> None:
         dialog = SettingsDialog(self._cfg, self._processes, self._reaper, self._vm, self,
                                 persist=self._persist, updater=self._updater,
-                                discord=self._discord)
+                                discord=self._discord, listen=self._listen)
+        if tab:
+            dialog.show_tab(tab)
+        dialog.listenChanged.connect(self.show_listen)
         dialog.optionsChanged.connect(lambda: self._on_tracks(self._tracks))
         dialog.projectRequested.connect(self.choose_project)
         dialog.appearanceChanged.connect(self.apply_appearance)

@@ -5,6 +5,10 @@
 // rend, dans le même bloc. Pas de pilote ASIO à choisir, pas de tampon en
 // plus. Disposition des canaux (identique à l'insert ASIO) : 2 canaux par
 // entrée physique, puis 8 par entrée virtuelle.
+//
+// En mode « sorties » (VBVMR_AUDIOCALLBACK_OUT), c'est le son de chaque bus,
+// juste avant son périphérique : 8 canaux par bus (A1, A2…, puis B1…). REKA
+// s'en sert pour l'écoute au casque (surround virtuel, égalisation).
 #pragma once
 
 #include <functional>
@@ -36,10 +40,12 @@ struct VmAudioBuffer {
 };
 
 constexpr long kVmModeInput = 0x00000001;
+constexpr long kVmModeOutput = 0x00000002;
 constexpr long kVmCommandStarting = 1;
 constexpr long kVmCommandEnding = 2;
 constexpr long kVmCommandChange = 3;
 constexpr long kVmCommandBufferIn = 10;
+constexpr long kVmCommandBufferOut = 11;
 
 class Voicemeeter {
 public:
@@ -51,9 +57,11 @@ public:
 
     // Charge VoicemeeterRemote64.dll et se connecte ; false + message sinon.
     bool open(const std::string& client, std::string& error);
-    // Enregistre et démarre le callback ; false + message sinon (un autre
-    // programme peut déjà l'utiliser).
-    bool startCallback(std::string& error);
+    // Enregistre (modes kVmModeInput / kVmModeOutput) et démarre le
+    // callback ; false + message sinon (un autre programme peut déjà
+    // l'utiliser).
+    bool startCallback(long mode, std::string& error);
+    long mode() const { return registered_ ? mode_ : 0; }
     void stopCallback();
     void close();
 
@@ -61,7 +69,8 @@ public:
     StartedFn onStarted;
     StoppedFn onStopped;
     StoppedFn onChanged;  // fréquence ou taille de bloc changée : relancer
-    BufferFn onBuffer;
+    BufferFn onBuffer;     // entrées
+    BufferFn onBufferOut;  // sorties (bus)
 
 private:
     using LoginFn = long(__stdcall*)();
@@ -82,6 +91,7 @@ private:
     SimpleFn unregister_ = nullptr;
     bool loggedIn_ = false;
     bool registered_ = false;
+    long mode_ = 0;
     std::string client_;
 };
 
