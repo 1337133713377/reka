@@ -32,6 +32,7 @@ class FakeEngine:
         self.samplerate, self.blocksize, self.latency = samplerate, blocksize, latency
         self.pid = None
         self.strips: list[dict] = []
+        self.listen: dict | None = None           # réglages d'écoute au casque reçus
         self.received: list[dict] = []
         self.missing_paths: set[str] = set()      # chemins « non installés » (tests)
         self._sock: socket.socket | None = None
@@ -127,6 +128,10 @@ class FakeEngine:
         if cmd == "setup":
             names = [s.get("name", "") for s in message.get("strips", [])]
             self.strips = [{"name": n, "enabled": True, "fx": []} for n in names]
+            if isinstance(message.get("listen"), dict):
+                self.listen = message["listen"]
+        elif cmd == "listen":
+            self.listen = message.get("listen") if isinstance(message.get("listen"), dict) else None
         elif cmd == "load":
             chains = message.get("chains", {}).get("strips", [])
             for strip, chain in zip(self.strips, chains):
@@ -192,8 +197,11 @@ class FakeEngine:
 
     def send_state(self) -> None:
         self._write({"type": "state",
-                     "engine": {"running": True, "samplerate": self.samplerate,
-                                "blocksize": self.blocksize, "message": ""},
+                     "engine": {"running": bool(self.strips) or self.listen_active,
+                                "samplerate": self.samplerate, "blocksize": self.blocksize,
+                                "message": "" if self.strips or self.listen_active
+                                else "écoute au casque désactivée"},
+                     "listen": {"active": self.listen_active},
                      "strips": [{"name": s["name"], "enabled": s["enabled"],
                                  "fx": [{"name": fx["name"], "format": fx["format"],
                                          "enabled": fx["enabled"], "open": fx["open"],
@@ -201,6 +209,10 @@ class FakeEngine:
                                          "latency": 0 if fx["missing"] else self.latency}
                                         for fx in s["fx"]]}
                                 for s in self.strips]})
+
+    @property
+    def listen_active(self) -> bool:
+        return bool(self.listen and (self.listen.get("eq") or self.listen.get("surround")))
 
     def edit_parameter(self) -> None:
         """Simule un réglage changé dans l'interface d'un plugin."""

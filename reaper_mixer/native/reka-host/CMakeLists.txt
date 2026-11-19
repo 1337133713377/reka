@@ -37,6 +37,7 @@ add_executable(reka-host WIN32
     src/main.cpp
     src/util.cpp
     src/voicemeeter.cpp
+    src/listen.cpp
     src/vst2_plugin.cpp
     src/vst3_plugin.cpp
     src/vst3_iids.cpp

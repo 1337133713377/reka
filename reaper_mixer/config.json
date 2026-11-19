@@ -63,6 +63,21 @@
   "reka_host": {
     "path": ""
   },
+  "listen": {
+    "eq": {
+      "enabled": false,
+      "name": "",
+      "source": "",
+      "preamp": 0.0,
+      "filters": []
+    },
+    "surround": {
+      "enabled": false,
+      "head": "medium",
+      "room": "living",
+      "amount": 1.0
+    }
+  },
   "vst": {
     "extra_dirs": []
   },

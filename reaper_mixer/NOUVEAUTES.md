@@ -4,6 +4,13 @@ effets, REAPER, FL Studio ou Equalizer APO. REKA se met ensuite à jour toute se
 
 ## Prochaine version
 
+- **Égalisation du casque** : ⚙ → Écoute, tape le modèle de ton casque, et REKA corrige sa
+  courbe avec le profil mesuré par AutoEQ (des milliers de casques et d'écouteurs). La courbe
+  s'affiche ; un fichier `ParametricEQ.txt` ou une config Equalizer APO s'importent aussi.
+- **Son surround virtuel** : chaque canal (jusqu'au 7.1) devient une enceinte placée autour de
+  toi, dans la pièce de ton choix (aucune, salon, cinéma), avec la taille de tête et l'intensité
+  réglables. Pastilles **EQ** et **3D** sous le knob Casque pour les allumer d'un clic. Marche
+  avec tous les moteurs d'effets.
 - **Moteur d'effets intégré, sans REAPER** (optionnel) : choisis *REKA (intégré)* dans
   ⚙ → Général → Effets. REKA charge lui-même tes plugins **VST2 et VST3** (64 bits) : ajout,
   bypass, interface, déplacement et copie avec les réglages. Il se branche directement dans

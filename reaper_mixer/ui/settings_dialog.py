@@ -35,6 +35,7 @@ from core.process_manager import is_blank_project
 from core.effects import HOST_APO, HOST_FLSTUDIO, HOST_REAPER, HOSTS, host_kind
 from core.voicemeeter_ctrl import EDITIONS, edition, strip_map
 from ui import styles
+from ui.listen_panel import ListenPanel
 from ui.project_dialog import default_project
 
 log = logging.getLogger(__name__)
@@ -195,16 +196,17 @@ class SettingsDialog(QDialog):
     discordChanged = Signal()        # réglages Discord modifiés
     exportRequested = Signal(str)    # « Exporter… » : fichier .reka à écrire
     importRequested = Signal(object) # « Importer… » : sauvegarde lue et confirmée (Backup)
+    listenChanged = Signal()         # écoute au casque (EQ, surround) modifiée
 
     BUFFER_CHOICES = ((0, "Ne pas modifier"), (512, "Standard — 512 échantillons"),
                       (256, "Réduit — 256 échantillons"), (128, "Minimal — 128 échantillons (PC puissant)"))
 
     def __init__(self, cfg: dict, processes, reaper, vm, parent: QWidget | None = None,
-                 persist: bool = True, updater=None, discord=None) -> None:
+                 persist: bool = True, updater=None, discord=None, listen=None) -> None:
         super().__init__(parent)
         self.setWindowTitle(f"Réglages — {config.APP_NAME}")
         self.setMinimumWidth(600)
-        self.resize(620, 760)
+        self.resize(700, 760)
         self._cfg = cfg
         self._persist = persist
         self._processes = processes
@@ -249,6 +251,9 @@ class SettingsDialog(QDialog):
         devices = [self._devices_group()] if self._has_devices else []
         self.tabs.addTab(self._tab(*devices, *([audio()] if audio else []), self._latency_group(),
                                    self._options_group()), "Audio")
+        self.listen_panel = ListenPanel(cfg, listen, parent=self)
+        self.listen_panel.changed.connect(self.listenChanged)
+        self.tabs.addTab(self._tab(self.listen_panel), "Écoute")
         self.tabs.addTab(self._tab(self._presets_group(), self._theme_group(), self._widgets_group(),
                                    self._background_group(), self._window_group()), "Apparence")
         self.tabs.addTab(self._tab(self._colors_group()), "Couleurs")
@@ -1385,7 +1390,15 @@ class SettingsDialog(QDialog):
         self.device_hint.style().unpolish(self.device_hint)
         self.device_hint.style().polish(self.device_hint)
 
+    def show_tab(self, title: str) -> None:
+        for index in range(self.tabs.count()):
+            if self.tabs.tabText(index) == title:
+                self.tabs.setCurrentIndex(index)
+                return
+
     def done(self, result: int) -> None:
+        self.listen_panel.flush()
+        self.listen_panel.disconnect_all()
         # Les fenêtres des moteurs ne restent visibles que pendant les réglages
         # (sauf celles déjà affichées par les boutons du Master)
         for key, box in (("reaper", self.show_reaper), ("voicemeeter", self.show_vm)):

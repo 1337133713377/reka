@@ -26,6 +26,10 @@ fichier s'ils sont ailleurs).
 Si l'hôte s'arrête (plugin qui plante), REKA le relance avec les dernières
 chaînes enregistrées ; après plusieurs arrêts rapprochés, il abandonne et
 le signale plutôt que de boucler.
+
+L'hôte fait aussi l'écoute au casque (core/listening.py, commande
+« listen ») : avec un autre moteur d'effets, REKA le lance pour l'écoute
+seule (listen_only : aucune strip, aucune chaîne d'effets).
 """
 
 from __future__ import annotations
@@ -405,17 +409,21 @@ class RekaHostController(EffectsHost):
     empty_hint = ""
 
     def __init__(self, cfg: dict, parent: QObject | None = None,
-                 launcher: Launcher | None = None, chains_file: Path | None = None) -> None:
+                 launcher: Launcher | None = None, chains_file: Path | None = None,
+                 listen_only: bool = False) -> None:
         super().__init__(cfg, parent)
         ed = edition(cfg)
-        strips = strip_map(cfg)
+        strips = () if listen_only else strip_map(cfg)
         self._strips = [(input_channel(s, ed.physical_strips), 2 if s < ed.physical_strips else 8)
                         for s in strips]
         self._count = len(strips)
+        self._listen_only = listen_only   # écoute au casque seulement : pas de chaînes d'effets
+        self._listen: dict | None = None  # réglages d'écoute (core/listening.py)
         self._launcher = launcher
         self._chains_file = chains_file or chains_path()
-        self._doc = load_chains_file(self._chains_file, self._count)
-        self._keep_file = True            # False après un import : le fichier importé est gardé
+        self._doc = empty_chains(0) if listen_only else load_chains_file(self._chains_file,
+                                                                          self._count)
+        self._keep_file = not listen_only  # False après un import : le fichier importé est gardé
         self._lock = threading.Lock()
         self._send_lock = threading.Lock()
         self._sock: socket.socket | None = None
@@ -456,6 +464,16 @@ class RekaHostController(EffectsHost):
     @property
     def engine_status(self) -> EngineStatus:
         return self._status
+
+    @property
+    def gave_up(self) -> bool:
+        return self._gave_up
+
+    def set_listen(self, message: dict) -> None:
+        """Réglages de l'écoute au casque (surround virtuel, égalisation) ; gardés
+        pour les relances de l'hôte."""
+        self._listen = dict(message)
+        self._send({"cmd": "listen", "listen": self._listen})
 
     @property
     def strip_tracks(self) -> list[TrackInfo | None]:
@@ -533,7 +551,7 @@ class RekaHostController(EffectsHost):
         return self._ready.wait(timeout_s)
 
     def close(self, save_project: bool = True) -> None:
-        if save_project and self._connected:
+        if save_project and self._connected and not self._listen_only:
             self._chains_event.clear()
             if self._send({"cmd": "get_chains"}) and not self._chains_event.wait(CHAINS_TIMEOUT_S):
                 log.warning("Le moteur REKA n'a pas renvoyé ses chaînes d'effets à temps.")
@@ -641,7 +659,7 @@ class RekaHostController(EffectsHost):
         sock = self._sock
         if sock is None:
             return False
-        if not self._connected and message.get("cmd") not in ("setup", "load", "quit"):
+        if not self._connected and message.get("cmd") not in ("setup", "load", "listen", "quit"):
             return False
         with self._send_lock:
             self._seq += 1
@@ -672,8 +690,11 @@ class RekaHostController(EffectsHost):
                 self._gave_up = True
                 log.error("Moteur REKA arrêté %d fois en %.0f s : abandon.",
                           len(self._crashes), RESTART_WINDOW_S)
-                self.command_failed.emit("Le moteur d'effets s'est arrêté plusieurs fois : un "
-                                         "plugin plante peut-être. Retire-le puis relance REKA.")
+                self.command_failed.emit(
+                    "Le moteur d'écoute au casque s'est arrêté plusieurs fois : relance REKA."
+                    if self._listen_only else
+                    "Le moteur d'effets s'est arrêté plusieurs fois : un "
+                    "plugin plante peut-être. Retire-le puis relance REKA.")
                 self.connection_changed.emit(False)
                 break
             if now - started > 1.0:
@@ -767,18 +788,22 @@ class RekaHostController(EffectsHost):
     def _read_loop(self, sock: socket.socket) -> None:
         reader = self._reader
         names = self._names()
-        self._send({"cmd": "setup", "client": config.APP_NAME,
-                    "strips": [{"name": names[i], "channel": ch, "channels": n}
-                               for i, (ch, n) in enumerate(self._strips)]})
-        doc = self.chains
-        missing = resolve_paths(doc, self.installed_plugins()) if any(
-            s["fx"] for s in doc["strips"]) else []
-        new = [m for m in missing if m not in self._missing_reported]
-        if new:
-            self._missing_reported.update(new)
-            self.command_failed.emit("Plugin introuvable sur ce PC : " + ", ".join(new)
-                                     + ". Ses réglages sont gardés.")
-        self._send({"cmd": "load", "chains": doc})
+        setup = {"cmd": "setup", "client": config.APP_NAME,
+                 "strips": [{"name": names[i], "channel": ch, "channels": n}
+                            for i, (ch, n) in enumerate(self._strips)]}
+        if self._listen is not None:
+            setup["listen"] = self._listen
+        self._send(setup)
+        if not self._listen_only:
+            doc = self.chains
+            missing = resolve_paths(doc, self.installed_plugins()) if any(
+                s["fx"] for s in doc["strips"]) else []
+            new = [m for m in missing if m not in self._missing_reported]
+            if new:
+                self._missing_reported.update(new)
+                self.command_failed.emit("Plugin introuvable sur ce PC : " + ", ".join(new)
+                                         + ". Ses réglages sont gardés.")
+            self._send({"cmd": "load", "chains": doc})
         while not self._stop.is_set():
             if self._dirty_at is not None and time.monotonic() >= self._dirty_at:
                 self._dirty_at = None
@@ -812,6 +837,8 @@ class RekaHostController(EffectsHost):
             self._set_connected(True)
             self._ready.set()
         elif kind == "chains":
+            if self._listen_only:
+                return
             try:
                 doc = clean_chains(message.get("chains"), self._count)
             except ChainsError as exc:

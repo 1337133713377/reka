@@ -25,7 +25,7 @@ Voicemeeter pour le son, tes plugins VST pour les effets, **une seule fenêtre**
 
 <br><br>
 
-[Aperçu](#apercu) · [Démarrer](#demarrer) · [Fonctions](#fonctions) · [Thèmes](#themes) · [Discord](#discord) · [Moteurs d'effets](#moteurs) · [Aide](#aide)
+[Aperçu](#apercu) · [Démarrer](#demarrer) · [Fonctions](#fonctions) · [Écoute](#ecoute) · [Thèmes](#themes) · [Discord](#discord) · [Moteurs d'effets](#moteurs) · [Aide](#aide)
 
 </div>
 
@@ -165,7 +165,7 @@ Coupe ton micro dans REKA : le **micro barré s'affiche dans Discord**, et l'inv
 - **Projet** : change de projet REAPER à chaud.
 - **Voicemeeter / REAPER** : affiche leur fenêtre si tu en as besoin.
 - **CPU et GPU** : la charge de tes effets, en ambre puis en rouge quand ça chauffe.
-- **Casque** : le volume de ta sortie principale.
+- **Casque** : le volume de ta sortie principale, et ses pastilles **EQ** et **3D**.
 - **Musique en cours** : pochette, titre, précédent / pause / suivant.
 
 </td>
@@ -213,10 +213,50 @@ Et juste en dessous, le **tampon audio** : plus il est petit, plus ta voix arriv
 | **Badge FX** | bypass de toute la chaîne |
 | **Nom de la strip** | double-clic = renommer |
 | **Knob Casque** | volume du casque · double-clic = 0 dB |
+| **Pastilles EQ / 3D** (sous le knob Casque) | allumer ou éteindre l'égalisation du casque / le surround virtuel |
 | **⚙** | tous les réglages |
 | **–** | réduire, dans la barre des tâches ou près de l'horloge |
 
 </details>
+
+<br>
+
+<a id="ecoute"></a>
+
+## 🎧 Écoute au casque
+
+Deux traitements pour ce que **tu entends**, réglés dans ⚙ → **Écoute** et allumés d'un clic
+par les pastilles **EQ** et **3D** sous le knob Casque.
+
+<table>
+<tr>
+<td width="50%" valign="top">
+
+### 🎚️ Ton casque, corrigé
+
+Tape le modèle de ton casque (*HD 600*, *DT 770*, *Arctis Nova*…) : REKA trouve son profil
+parmi **des milliers de casques et d'écouteurs mesurés** par la communauté
+[AutoEQ](https://github.com/jaakkopasanen/AutoEq), et corrige sa courbe vers un son neutre.
+La courbe de la correction s'affiche, et un fichier `ParametricEQ.txt` ou une config
+Equalizer APO s'importent aussi.
+
+</td>
+<td width="50%" valign="top">
+
+### 🌀 Son surround virtuel
+
+Chaque canal du son devient une **enceinte placée autour de toi** : les pas derrière toi
+s'entendent derrière, les dialogues devant. Choisis la **pièce** (aucune, salon, cinéma), la
+**taille de tête** et l'**intensité**. En stéréo, le son sort de deux enceintes face à toi
+au lieu du milieu de ta tête.
+
+</td>
+</tr>
+</table>
+
+Ça marche avec **n'importe quel moteur d'effets** et coûte moins de 1 % d'un cœur du
+processeur. Pour le vrai 7.1 des jeux : *Paramètres son de Windows* → **Voicemeeter Input** →
+*Configurer* → **7.1 Surround**.
 
 <br>
 

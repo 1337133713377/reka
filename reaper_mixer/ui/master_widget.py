@@ -1,8 +1,8 @@
 """
 Panneau master : titre + engrenage (réglages), badge de connexion, boutons
 pour afficher Voicemeeter / REAPER, knob du casque (bus A1) avec son
-interpolation douce, musique en cours (pochette, précédent / pause /
-suivant), VU-mètre master.
+interpolation douce et les pastilles de l'écoute au casque (EQ, 3D),
+musique en cours (pochette, précédent / pause / suivant), VU-mètre master.
 """
 
 from __future__ import annotations
@@ -318,6 +318,51 @@ class EngineButton(QAbstractButton):
         super().leaveEvent(event)
 
 
+class ListenToggle(QAbstractButton):
+    """Pastille « EQ » / « 3D » sous le knob du casque : égalisation du casque et
+    surround virtuel, allumés ou éteints d'un clic."""
+
+    def __init__(self, key: str, label: str, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.key = key
+        self._label = label
+        self.setCheckable(True)
+        self.setFixedHeight(20)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.toggled.connect(lambda _on: self.update())
+
+    def text(self) -> str:  # noqa: D401 - API Qt
+        return self._label
+
+    def paintEvent(self, _event) -> None:  # noqa: N802
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        rect = QRectF(0.5, 0.5, self.width() - 1, self.height() - 1)
+        hover = self.underMouse()
+        accent = styles.accent("headphone", styles.MASTER_SCOPE)
+        on = self.isChecked()
+        if on:
+            p.setPen(QPen(QColor(accent), 1))
+            p.setBrush(styles.color(accent, 0.22))
+        else:
+            p.setPen(QPen(QColor(styles.accent_dim("headphone", styles.MASTER_SCOPE) if hover
+                                 else styles.BORDER_COLUMN), 1))
+            p.setBrush(QColor(styles.BUTTON_HOVER if hover else styles.BG_DEEP))
+        p.drawRoundedRect(rect, rect.height() / 2, rect.height() / 2)
+        p.setFont(styles.font(8, QFont.Weight.DemiBold))
+        p.setPen(QColor(accent if on else styles.TEXT_PRIMARY if hover else styles.TEXT_MUTED))
+        p.drawText(rect, Qt.AlignmentFlag.AlignCenter, self._label)
+
+    def enterEvent(self, event) -> None:  # noqa: N802
+        self.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event) -> None:  # noqa: N802
+        self.update()
+        super().leaveEvent(event)
+
+
 class LoadMeter(QWidget):
     """Charge du moteur d'effets (REAPER et ses plugins…) : une barre CPU et,
     si Windows la donne, une barre GPU. Ambre puis rouge quand elle monte."""
@@ -391,6 +436,7 @@ class MasterWidget(QFrame):
     updateRequested = Signal()
     headphoneChanged = Signal(float)
     engineRequested = Signal(str)        # « voicemeeter » / « reaper » : afficher / cacher
+    listenToggled = Signal(str, bool)    # « eq » / « surround » : écoute au casque
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -448,6 +494,17 @@ class MasterWidget(QFrame):
         caption.setObjectName("masterLabel")
         caption.setAlignment(Qt.AlignmentFlag.AlignCenter)
         knob_box.addWidget(caption)
+        listen_row = QHBoxLayout()
+        listen_row.setContentsMargins(4, 6, 4, 0)
+        listen_row.setSpacing(4)
+        self.listen_buttons: dict[str, ListenToggle] = {}
+        for key, label in (("eq", "EQ"), ("surround", "3D")):
+            button = ListenToggle(key, label)
+            button.clicked.connect(lambda on, k=key: self.listenToggled.emit(k, bool(on)))
+            listen_row.addWidget(button)
+            self.listen_buttons[key] = button
+        knob_box.addLayout(listen_row)
+        self.set_listen(False, False, False, "")
         layout.addWidget(knob_section)
 
         self.media = MediaWidget()
@@ -506,6 +563,21 @@ class MasterWidget(QFrame):
         button = self.engines.get(key)
         if button is not None and button.is_shown() != shown:
             button.set_shown(shown)
+
+    def set_listen(self, eq: bool, surround: bool, has_profile: bool, eq_name: str) -> None:
+        """État des pastilles EQ / 3D."""
+        buttons = self.listen_buttons
+        for key, on in (("eq", eq), ("surround", surround)):
+            if buttons[key].isChecked() != on:
+                buttons[key].setChecked(on)
+        if has_profile:
+            buttons["eq"].setToolTip(f"Égalisation du casque « {eq_name} » "
+                                     f"{'allumée' if eq else 'éteinte'} — clic pour "
+                                     f"{'l’éteindre' if eq else 'l’allumer'}")
+        else:
+            buttons["eq"].setToolTip("Égalisation du casque : clic pour choisir ton casque")
+        buttons["surround"].setToolTip(f"Son surround virtuel {'allumé' if surround else 'éteint'}"
+                                       f" — clic pour {'l’éteindre' if surround else 'l’allumer'}")
 
     def set_load(self, load: EngineLoad | None, engine: str = "", visible: bool = True) -> None:
         """Charge CPU / GPU du moteur d'effets ; cachée sans mesure ou si l'option est éteinte."""

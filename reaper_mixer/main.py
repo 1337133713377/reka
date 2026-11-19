@@ -54,6 +54,7 @@ from core.process_manager import (AppNotInstalledError, OtherEditionRunningError
                                   ProcessManagerError, StartupAborted,
                                   installed_voicemeeter_kinds, reaper_project)
 from core.effects import HOST_NONE, HOST_REAPER, EffectsHost, create_host
+from core.listening import ListenController
 from core.engine_load import EngineLoadMonitor, create_monitor
 from core.updater import UpdateChecker, cleanup_previous, load_build_info
 from core.voicemeeter_ctrl import EDITIONS, VoicemeeterController, edition
@@ -357,6 +358,7 @@ class MixerApp:
         self._processes = ProcessManager(cfg)
         self._vm = VoicemeeterController(cfg)
         self._host = create_host(cfg, self._processes)
+        self._listen = ListenController(cfg, self._host)     # écoute au casque (EQ, 3D)
         self._updater = UpdateChecker(cfg, load_build_info())
         self._splash = SplashScreen()
         self._worker: StartupWorker | None = None
@@ -399,7 +401,9 @@ class MixerApp:
                                       apps=create_backend(self._cfg), updater=self._updater,
                                       media=create_media_backend(self._cfg),
                                       load=create_monitor(self._processes, self._host),
-                                      discord=create_discord_backend(self._cfg))
+                                      discord=create_discord_backend(self._cfg),
+                                      listen=self._listen)
+            self._listen.start()      # avant le moteur REKA : ses réglages partent au démarrage
             if self._host.kind != HOST_REAPER:
                 self._host.start()    # FL Studio, Equalizer APO : dans le thread UI
         except Exception as exc:
@@ -585,6 +589,7 @@ class MixerApp:
         # pilote ASIO de l'insert) tourne encore, sinon REAPER afficherait une
         # erreur de carte son en partant.
         _safely(self._host.close, save_project=True)     # sauvegarde du projet REAPER
+        _safely(self._listen.close)                       # moteur d'écoute au casque
         _safely(self._vm.release)                         # inserts rendus
         if self._host.process_key:
             _safely(self._processes.stop, self._host.process_key)
@@ -709,12 +714,17 @@ def run_demo(app: QApplication, cfg: dict, selftest: str | None, host: str | Non
     from core.discord_rpc import DemoDiscord, DiscordSettings
     from core.media import DemoMedia
 
+    from core.reka_host import demo_launcher
+
     vm, processes = DemoVoicemeeter(cfg), DemoProcesses()
     reaper = demo_host(cfg, host, processes)
     load = EngineLoadMonitor(DemoLoad(reaper)) if reaper.kind != HOST_NONE else None
+    listen = ListenController(cfg, reaper, launcher=demo_launcher())
     window = MainWindow(cfg=cfg, vm=vm, reaper=reaper, processes=processes, persist=False,
                         apps=DemoAppVolumes(), media=DemoMedia(), load=load,
-                        discord=DemoDiscord(DiscordSettings.from_config(cfg)))
+                        discord=DemoDiscord(DiscordSettings.from_config(cfg)), listen=listen)
+    listen.start()
+    app.aboutToQuit.connect(listen.close)
     if reaper.kind != HOST_REAPER:
         reaper.start()
     if selftest is None:
