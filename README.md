@@ -424,6 +424,6 @@ Chaque push construit et teste `REKA.exe` sur GitHub ; pousser un tag `v…` pub
 
 **REKA** est développé par **Regrettable** et **Zerka**
 
-Merci à **206** pour sa contribution
+Merci à **kyky** pour sa contribution
 
 </div>
