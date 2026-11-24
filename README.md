@@ -6,7 +6,7 @@
 
 ### La console de mixage tout-en-un pour Windows
 
-Voicemeeter pour le son, tes plugins VST pour les effets, **une seule fenêtre** pour tout piloter.
+Voicemeeter pour le son, tes plugins VST pour les effets, **une seule fenêtre** pour tout piloter. 
 
 <br>
 
