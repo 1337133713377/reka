@@ -13,17 +13,27 @@ mute, le jaune des VU et le blanc ne changent pas.
 Couleurs par élément (config ui.colors) : chaque élément (knob Discord,
 bouton Muet, VU…) peut avoir sa propre couleur, pour toute la console ou pour
 un seul canal ; sinon il suit le thème. Voir element_color().
+
+Style d'interface (config ui.interface, voir ui/interfaces.py) : la forme de
+toute la console (arrondis, reliefs, knobs, faders, VU, police, fond). Un
+style a sa palette, qui remplace celle du thème, sauf si l'utilisateur garde
+ses couleurs (ui.keep_colors) ; les widgets dessinés lisent INTERFACE, rad(),
+draw_box(), fader_shape() et vu_shape().
 """
 
 from __future__ import annotations
 
 import logging
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 
-from PySide6.QtGui import QColor, QFont, QFontDatabase, QPalette
+from PySide6.QtCore import QPointF, QRectF
+from PySide6.QtGui import QColor, QFont, QFontDatabase, QPainter, QPalette, QPen
 from PySide6.QtWidgets import QApplication
 
 from core import config
+from ui import interfaces
+from ui.interfaces import Interface
 
 log = logging.getLogger(__name__)
 
@@ -63,6 +73,11 @@ BG_DEEP = "#030b06"           # fonds très sombres (badge, bouton projet, Intel
 ON_ACCENT = "#00341c"         # encre sur l'accent (badge FX allumé)
 ON_ACCENT_DARK = "#00140a"    # texte des boutons principaux
 BADGE_OFF = "#0d1a14"         # badge FX éteint
+# Dérivées de la palette (voir _derive) ; un style d'interface peut les fixer
+VU_BASE = GREEN_NEON          # couleur des niveaux normaux des VU-mètres
+LCD_BG = BG_DEEP              # afficheurs LCD (style « Lecteur 2000 »)
+LCD_TEXT = GREEN_NEON
+_DERIVED = ("VU_BASE", "LCD_BG", "LCD_TEXT")
 
 # --- Palette « Dark Studio Pro » (thème par défaut, façon DAW) --------------
 # Neutres gris-bleu et accent bleu studio, appliqués tels quels (sans rotation).
@@ -135,6 +150,15 @@ DEFAULT_VU_STYLE = "segments"
 FADER_STYLE = DEFAULT_FADER_STYLE
 VU_STYLE = DEFAULT_VU_STYLE
 
+# --- Style d'interface et disposition (config ui.interface…) -----------------
+INTERFACE: Interface = interfaces.interface(None)
+KEEP_COLORS = False           # mode mixte : couleurs du thème par-dessus le style
+DENSITY = interfaces.DEFAULT_DENSITY
+ORIENTATION = interfaces.DEFAULT_ORIENTATION
+ANIMATIONS = interfaces.DEFAULT_ANIMATIONS
+USER_FONT = DEFAULT_FONT      # police choisie (FONT_FAMILY : celle appliquée)
+_user_colors: dict[str, str] = {}
+
 # --- Couleurs par élément ---------------------------------------------------
 # Clés de config ui.colors : « mute » (toute la console), « mute@2 » (canal 3
 # seulement), « vu@master » (Master seulement). La couleur d'un canal passe
@@ -173,18 +197,98 @@ def _valid_colors(value) -> dict[str, str]:
 
 
 def configure(ui_cfg: dict) -> bool:
-    """Police, styles de widgets et couleurs par élément d'après la config `ui` ;
-    True si quelque chose a changé."""
-    global FONT_FAMILY, FADER_STYLE, VU_STYLE, COLORS
-    family = str(ui_cfg.get("font_family") or DEFAULT_FONT).strip() or DEFAULT_FONT
+    """Police, styles de widgets, couleurs par élément, style d'interface et
+    disposition d'après la config `ui` ; True si quelque chose a changé.
+    Appeler ensuite set_theme() : la palette dépend du style d'interface."""
+    global FONT_FAMILY, FADER_STYLE, VU_STYLE, COLORS, INTERFACE, KEEP_COLORS, DENSITY
+    global ORIENTATION, ANIMATIONS, USER_FONT, _user_colors
+    before = (FONT_FAMILY, FADER_STYLE, VU_STYLE, COLORS, INTERFACE.key, KEEP_COLORS, DENSITY,
+              ORIENTATION, ANIMATIONS)
+    USER_FONT = str(ui_cfg.get("font_family") or DEFAULT_FONT).strip() or DEFAULT_FONT
     fader = ui_cfg.get("fader_style")
-    fader = fader if fader in FADER_STYLES else DEFAULT_FADER_STYLE
+    FADER_STYLE = fader if fader in FADER_STYLES else DEFAULT_FADER_STYLE
     vu = ui_cfg.get("vu_style")
-    vu = vu if vu in VU_STYLES else DEFAULT_VU_STYLE
-    colors = _valid_colors(ui_cfg.get("colors"))
-    changed = (family, fader, vu, colors) != (FONT_FAMILY, FADER_STYLE, VU_STYLE, COLORS)
-    FONT_FAMILY, FADER_STYLE, VU_STYLE, COLORS = family, fader, vu, colors
-    return changed
+    VU_STYLE = vu if vu in VU_STYLES else DEFAULT_VU_STYLE
+    INTERFACE = interfaces.interface(ui_cfg.get("interface"))
+    KEEP_COLORS = bool(ui_cfg.get("keep_colors", False))
+    DENSITY = interfaces.choice(ui_cfg.get("density"), interfaces.DENSITIES,
+                                interfaces.DEFAULT_DENSITY)
+    ORIENTATION = interfaces.choice(ui_cfg.get("orientation"), interfaces.ORIENTATIONS,
+                                    interfaces.DEFAULT_ORIENTATION)
+    ANIMATIONS = interfaces.choice(ui_cfg.get("animations"), interfaces.ANIMATIONS,
+                                   interfaces.DEFAULT_ANIMATIONS)
+    # Police du style, si l'utilisateur garde la police d'origine
+    FONT_FAMILY = INTERFACE.font if INTERFACE.font and USER_FONT == DEFAULT_FONT else USER_FONT
+    _user_colors = _valid_colors(ui_cfg.get("colors"))
+    COLORS = _user_colors if uses_theme_colors() else {}
+    return before != (FONT_FAMILY, FADER_STYLE, VU_STYLE, COLORS, INTERFACE.key, KEEP_COLORS,
+                      DENSITY, ORIENTATION, ANIMATIONS)
+
+
+def uses_theme_colors(iface: Interface | None = None, keep: bool | None = None) -> bool:
+    """La console suit le thème et les couleurs choisies (Apparence, Couleurs) :
+    style sans palette propre, ou mode mixte."""
+    iface = INTERFACE if iface is None else iface
+    return not iface.palette or (KEEP_COLORS if keep is None else keep)
+
+
+# --- Formes selon le style d'interface ----------------------------------------
+def rad(radius: float) -> float:
+    """Arrondi d'un élément (pensé pour REKA) dans le style d'interface en cours."""
+    return min(radius * INTERFACE.radius, INTERFACE.max_radius)
+
+
+def fader_shape() -> str:
+    """Dessin du curseur des faders : celui du style, sinon celui choisi dans Apparence."""
+    return INTERFACE.fader or FADER_STYLE
+
+
+def vu_shape() -> str:
+    return INTERFACE.vu or VU_STYLE
+
+
+def bevelled() -> bool:
+    return INTERFACE.borders == "bevel"
+
+
+def draw_bevel(p: QPainter, rect: QRectF, sunken: bool = False, strength: float = 1.0) -> None:
+    """Relief façon années 2000 : arête claire en haut à gauche, sombre en bas
+    à droite (l'inverse si `sunken`)."""
+    light = color(WHITE, 0.42 * strength)
+    dark = color(BG_BLACK, 0.55 * strength)
+    top_left, bottom_right = (dark, light) if sunken else (light, dark)
+    r = rect.adjusted(0.5, 0.5, -0.5, -0.5)
+    p.save()
+    p.setBrush(QColor(0, 0, 0, 0))
+    p.setPen(QPen(top_left, 1))
+    p.drawLine(QPointF(r.left(), r.bottom()), QPointF(r.left(), r.top()))
+    p.drawLine(QPointF(r.left(), r.top()), QPointF(r.right(), r.top()))
+    p.setPen(QPen(bottom_right, 1))
+    p.drawLine(QPointF(r.right(), r.top()), QPointF(r.right(), r.bottom()))
+    p.drawLine(QPointF(r.right(), r.bottom()), QPointF(r.left(), r.bottom()))
+    p.restore()
+
+
+def draw_box(p: QPainter, rect: QRectF, radius: float, sunken: bool = False) -> None:
+    """Rectangle arrondi (plume et brosse en cours) à la forme du style : arrondi
+    adapté, et relief pour le style « Lecteur 2000 »."""
+    r = rad(radius)
+    p.drawRoundedRect(rect, r, r)
+    if bevelled():
+        draw_bevel(p, rect, sunken)
+
+
+def animations(level: str = "on") -> bool:
+    """Les animations de ce niveau sont-elles permises ? « on » : décoratives
+    (pulsation, fondu) ; « reduced » : utiles (knob qui glisse, égaliseur)."""
+    if ANIMATIONS == "off":
+        return False
+    return level == "reduced" or ANIMATIONS == "on"
+
+
+def spacing(px: float) -> int:
+    """Écart ou marge à la densité choisie."""
+    return max(0, round(px * interfaces.density_factor(DENSITY)))
 
 
 def color_key(element: str, scope: int | str | None = None) -> str:
@@ -205,7 +309,7 @@ def element_color(element: str, scope: int | str | None = None,
 
 def element_default(element: str) -> str:
     """Couleur d'un élément quand il suit le thème."""
-    return {"mute": MUTE_ON, "pad": RED_MUTE, "name": TEXT_PRIMARY,
+    return {"mute": MUTE_ON, "pad": RED_MUTE, "name": TEXT_PRIMARY, "vu": VU_BASE,
             "panel": BG_COLUMN}.get(element, GREEN_NEON)
 
 
@@ -341,14 +445,34 @@ def theme_palette(theme: str | None) -> tuple[str, dict[str, str]]:
         values["GREEN_BRIGHT"] = _mix(accent, QColor("#ffffff"), HOVER_TOWARD_WHITE).name()
         if contrast(accent, QColor(values["ON_ACCENT"])) < 4.5:   # « FX » du badge allumé
             values["ON_ACCENT"] = values["ON_ACCENT_DARK"]
-    return theme, values
+    return theme, _derive(values)
+
+
+def _derive(values: dict[str, str]) -> dict[str, str]:
+    """Couleurs dérivées que la palette ne donne pas (VU, afficheurs LCD)."""
+    values = dict(values)
+    values.setdefault("VU_BASE", values["GREEN_NEON"])
+    values.setdefault("LCD_BG", values["BG_DEEP"])
+    values.setdefault("LCD_TEXT", values["GREEN_NEON"])
+    return values
+
+
+def look_palette(theme: str | None, iface: Interface | None = None,
+                 keep_colors: bool | None = None) -> tuple[str, dict[str, str]]:
+    """(thème retenu, palette appliquée) : celle du thème, ou celle du style
+    d'interface s'il en a une et que l'utilisateur ne garde pas ses couleurs."""
+    iface = INTERFACE if iface is None else iface
+    theme, values = theme_palette(theme)
+    if not uses_theme_colors(iface, keep_colors):
+        values = {**{k: v for k, v in values.items() if k not in _DERIVED}, **iface.palette}
+    return theme, _derive(values)
 
 
 def set_theme(theme: str | None) -> str:
     """Recolore la palette d'après le thème ; renvoie le thème appliqué (le
     thème par défaut si `theme` est inconnu). Appeler ensuite refresh()."""
     global _current_theme
-    theme, values = theme_palette(theme)
+    theme, values = look_palette(theme)
     globals().update(values)
     _current_theme = theme
     return theme
@@ -447,6 +571,32 @@ def current_theme() -> str:
     return _current_theme
 
 
+# État de l'apparence, sauvegardé le temps d'un aperçu (previewing)
+_LOOK_STATE = (*_THEMED, *_DERIVED, "FONT_FAMILY", "FADER_STYLE", "VU_STYLE", "COLORS",
+               "INTERFACE", "KEEP_COLORS", "DENSITY", "ORIENTATION", "ANIMATIONS", "USER_FONT",
+               "_user_colors", "_current_theme", "_panel_opacity")
+
+
+@contextmanager
+def previewing(ui_cfg: dict, interface_key: str | None = None, keep_colors: bool | None = None):
+    """Apparence d'une config `ui` (avec un autre style d'interface, ou le mode
+    mixte changé) le temps du bloc, puis retour à celle en cours. Sert aux
+    aperçus : un widget dessiné et capturé dans le bloc a le look demandé
+    (lui donner aussi build_stylesheet() comme feuille de style)."""
+    saved = {name: globals()[name] for name in _LOOK_STATE}
+    try:
+        cfg = dict(ui_cfg)
+        if interface_key is not None:
+            cfg["interface"] = interface_key
+        if keep_colors is not None:
+            cfg["keep_colors"] = keep_colors
+        configure(cfg)
+        set_theme(cfg.get("theme", DEFAULT_THEME))
+        yield
+    finally:
+        globals().update(saved)
+
+
 def _rgba(value: str, alpha: float) -> str:
     c = QColor(value)
     return f"rgba({c.red()}, {c.green()}, {c.blue()}, {max(0.0, min(1.0, alpha)):.3f})"
@@ -506,7 +656,18 @@ def _apply_palette(app: QApplication) -> None:
     app.setPalette(palette)
 
 
+def _px(value: float) -> str:
+    return f"{value:g}px"
+
+
 def _stylesheet() -> str:
+    def r(radius: float) -> str:
+        return _px(rad(radius))
+
+    return _base_stylesheet(r) + _interface_stylesheet()
+
+
+def _base_stylesheet(r) -> str:
     return f"""
 * {{
     font-family: "{FONT_FAMILY}", "{FONT_FALLBACK}";
@@ -524,15 +685,16 @@ QMainWindow, QDialog {{
 QFrame#column {{
     background: @COLUMN_BG@;
     border: 1px solid {BORDER_COLUMN};
-    border-radius: 14px;
+    border-radius: {r(14)};
 }}
 QFrame#section {{
     background: @SECTION_BG@;
     border: 1px solid {BORDER_SECTION};
-    border-radius: 10px;
+    border-radius: {r(10)};
 }}
 QLabel {{
     background: transparent;
+    border: none;
 }}
 QLabel#sectionTitle {{
     color: {TEXT_SECONDARY};
@@ -564,11 +726,12 @@ QLabel#stripName {{
     color: {TEXT_PRIMARY};
     font-size: 12px;
     font-weight: 600;
+    padding: 0px;
 }}
 QLineEdit#stripNameEdit {{
     background: {BG_SECTION};
     border: 1px solid {GREEN_DIM};
-    border-radius: 5px;
+    border-radius: {r(5)};
     color: {TEXT_PRIMARY};
     font-size: 12px;
     font-weight: 600;
@@ -595,7 +758,7 @@ QLabel#masterLabel {{
 QPushButton#muteButton {{
     background: {BUTTON_BG};
     border: 1px solid {BORDER_COLUMN};
-    border-radius: 7px;
+    border-radius: {r(7)};
     color: {TEXT_PRIMARY};
     font-size: 11px;
     font-weight: 600;
@@ -617,7 +780,7 @@ QPushButton#muteButton:checked:hover {{
 QPushButton#soloButton {{
     background: {BUTTON_BG};
     border: 1px solid {BORDER_COLUMN};
-    border-radius: 7px;
+    border-radius: {r(7)};
     color: {TEXT_PRIMARY};
     font-size: 11px;
     font-weight: 600;
@@ -658,7 +821,7 @@ QScrollBar:horizontal {{
 }}
 QScrollBar::handle:vertical, QScrollBar::handle:horizontal {{
     background: {BORDER_COLUMN};
-    border-radius: 3px;
+    border-radius: {r(3)};
 }}
 QScrollBar::handle:vertical {{
     min-height: 24px;
@@ -694,7 +857,7 @@ QDialog QLabel#ok {{
 QGroupBox {{
     background: {BG_COLUMN};
     border: 1px solid {BORDER_COLUMN};
-    border-radius: 10px;
+    border-radius: {r(10)};
     margin-top: 18px;
     padding: 12px 10px 10px 10px;
     font-weight: 600;
@@ -708,7 +871,7 @@ QGroupBox::title {{
 QLineEdit, QComboBox {{
     background: {BG_SECTION};
     border: 1px solid {BORDER_COLUMN};
-    border-radius: 6px;
+    border-radius: {r(6)};
     padding: 5px 8px;
     selection-background-color: {GREEN_DIM};
 }}
@@ -723,12 +886,12 @@ QComboBox QAbstractItemView {{
 QListWidget {{
     background: {BG_SECTION};
     border: 1px solid {BORDER_COLUMN};
-    border-radius: 8px;
+    border-radius: {r(8)};
     padding: 4px;
 }}
 QListWidget::item {{
     padding: 5px 6px;
-    border-radius: 5px;
+    border-radius: {r(5)};
 }}
 QListWidget::item:hover {{
     background: {BUTTON_BG};
@@ -740,7 +903,7 @@ QListWidget::item:selected {{
 QPushButton {{
     background: {BUTTON_BG};
     border: 1px solid {BORDER_COLUMN};
-    border-radius: 7px;
+    border-radius: {r(7)};
     padding: 6px 14px;
     font-weight: 600;
 }}
@@ -772,7 +935,7 @@ QCheckBox {{
 QCheckBox::indicator {{
     width: 16px;
     height: 16px;
-    border-radius: 4px;
+    border-radius: {r(4)};
     border: 1px solid {GREEN_DIM};
     background: {BG_SECTION};
 }}
@@ -783,12 +946,12 @@ QCheckBox::indicator:checked {{
 QMenu {{
     background: {BG_COLUMN};
     border: 1px solid {BORDER_COLUMN};
-    border-radius: 8px;
+    border-radius: {r(8)};
     padding: 4px;
 }}
 QMenu::item {{
     padding: 6px 18px 6px 12px;
-    border-radius: 5px;
+    border-radius: {r(5)};
 }}
 QMenu::item:selected {{
     background: {GREEN_DIM};
@@ -802,7 +965,7 @@ QToolTip {{
     background: {BG_COLUMN};
     color: {TEXT_PRIMARY};
     border: 1px solid {GREEN_DIM};
-    border-radius: 4px;
+    border-radius: {r(4)};
     padding: 4px 6px;
 }}
 QMessageBox {{
@@ -817,10 +980,10 @@ QTabWidget::pane {{
 QTabBar::tab {{
     background: transparent;
     color: {TEXT_SECONDARY};
-    padding: 7px 14px;
-    margin-right: 4px;
+    padding: 7px 12px;
+    margin-right: 3px;
     border: 1px solid transparent;
-    border-radius: 7px;
+    border-radius: {r(7)};
     font-weight: 600;
 }}
 QTabBar::tab:hover {{
@@ -835,32 +998,32 @@ QTabBar::tab:selected {{
 QSlider::groove:horizontal {{
     height: 4px;
     background: {BUTTON_BG};
-    border-radius: 2px;
+    border-radius: {r(2)};
 }}
 QSlider::sub-page:horizontal {{
     background: {GREEN_DIM};
-    border-radius: 2px;
+    border-radius: {r(2)};
 }}
 QSlider::handle:horizontal {{
     background: {GREEN_NEON};
     width: 14px;
     height: 14px;
     margin: -5px 0;
-    border-radius: 7px;
+    border-radius: {r(7)};
 }}
 QSlider::groove:vertical {{
     width: 4px;
     background: {BUTTON_BG};
     border: 1px solid {BORDER_COLUMN};
-    border-radius: 2px;
+    border-radius: {r(2)};
 }}
 QSlider::add-page:vertical {{
     background: {GREEN_NEON};
-    border-radius: 2px;
+    border-radius: {r(2)};
 }}
 QSlider::sub-page:vertical {{
     background: {BUTTON_BG};
-    border-radius: 2px;
+    border-radius: {r(2)};
 }}
 QSlider::handle:vertical {{
     background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #f8fafc, stop:0.48 #cbd5e1,
@@ -869,7 +1032,7 @@ QSlider::handle:vertical {{
     height: 26px;
     width: 18px;
     margin: 0 -8px;
-    border-radius: 4px;
+    border-radius: {r(4)};
 }}
 QSlider::handle:vertical:hover {{
     border-color: {GREEN_NEON};
@@ -883,7 +1046,7 @@ QRadioButton {{
 QRadioButton::indicator {{
     width: 14px;
     height: 14px;
-    border-radius: 7px;
+    border-radius: {r(7)};
     border: 1px solid {GREEN_DIM};
     background: {BG_SECTION};
 }}
@@ -921,7 +1084,7 @@ QLabel#appPercent {{
 QProgressBar {{
     background: {BUTTON_BG};
     border: 1px solid {BORDER_COLUMN};
-    border-radius: 5px;
+    border-radius: {r(5)};
     height: 10px;
     text-align: center;
     color: {TEXT_PRIMARY};
@@ -929,6 +1092,131 @@ QProgressBar {{
 }}
 QProgressBar::chunk {{
     background: {GREEN_NEON};
-    border-radius: 4px;
+    border-radius: {r(4)};
+}}
+"""
+
+
+def _interface_stylesheet() -> str:
+    """Ajouts du style d'interface en cours (après la QSS de base : ils l'emportent)."""
+    if INTERFACE.borders == "bevel":
+        return _bevel_stylesheet()
+    if INTERFACE.borders == "none":
+        return _flat_stylesheet()
+    return ""
+
+
+def _bevel_edges(base: str, sunken: bool = False, width: int = 2) -> str:
+    """Bordure en relief (haut, droite, bas, gauche)."""
+    light, dark = mix(base, WHITE, 0.32), mix(base, BG_BLACK, 0.55)
+    top_left, bottom_right = (dark, light) if sunken else (light, dark)
+    return (f"border: {width}px solid; "
+            f"border-color: {top_left} {bottom_right} {bottom_right} {top_left};")
+
+
+def _chrome(base: str) -> str:
+    return (f"qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {mix(base, WHITE, 0.38)}, "
+            f"stop:0.5 {base}, stop:1 {mix(base, BG_BLACK, 0.25)})")
+
+
+def _lcd_font() -> str:
+    return '"Consolas", "Lucida Console", "Courier New", monospace'
+
+
+def _bevel_stylesheet() -> str:
+    """« Lecteur 2000 » : panneaux en relief, boutons chromés, afficheurs LCD."""
+    return f"""
+QFrame#column {{
+    {_bevel_edges(BG_COLUMN)}
+}}
+QFrame#section {{
+    {_bevel_edges(BG_SECTION, sunken=True)}
+}}
+QPushButton, QPushButton#muteButton, QPushButton#soloButton {{
+    background: {_chrome(BUTTON_BG)};
+    {_bevel_edges(BUTTON_BG)}
+}}
+QPushButton:hover, QPushButton#muteButton:hover, QPushButton#soloButton:hover {{
+    background: {_chrome(BUTTON_HOVER)};
+}}
+QPushButton:pressed, QPushButton#muteButton:pressed {{
+    {_bevel_edges(BUTTON_BG, sunken=True)}
+}}
+QPushButton#muteButton:checked {{
+    background: {_chrome(MUTE_ON)};
+    {_bevel_edges(MUTE_ON, sunken=True)}
+    color: {WHITE};
+}}
+QPushButton#soloButton:checked {{
+    background: {_chrome(SOLO_ON)};
+    {_bevel_edges(SOLO_ON, sunken=True)}
+}}
+QPushButton#primary {{
+    background: {_chrome(GREEN_DIM)};
+    {_bevel_edges(GREEN_DIM)}
+    color: {LCD_TEXT};
+}}
+QLabel#stripName, QLabel#faderValue, QLabel#masterValue {{
+    background: {LCD_BG};
+    color: {LCD_TEXT};
+    font-family: {_lcd_font()};
+    {_bevel_edges(BG_SECTION, sunken=True, width=1)}
+    padding: 1px 4px;
+}}
+QLabel#faderValue[muted="true"] {{
+    color: {mix(LCD_TEXT, LCD_BG, 0.6)};
+}}
+QLabel#stripName {{
+    font-size: 12px;
+    font-weight: 700;
+}}
+QLabel#sectionTitle, QLabel#knobLabel, QLabel#masterLabel {{
+    font-weight: 700;
+}}
+QLabel#masterTitle {{
+    font-size: 16px;
+    font-weight: 700;
+}}
+QTabBar::tab:selected {{
+    background: {_chrome(BUTTON_BG)};
+    {_bevel_edges(BUTTON_BG)}
+}}
+QGroupBox {{
+    {_bevel_edges(BG_COLUMN)}
+}}
+"""
+
+
+def _flat_stylesheet() -> str:
+    """« Minimal » : aplats sans bordure, texte plus léger."""
+    return f"""
+QFrame#column {{
+    border: 1px solid transparent;
+}}
+QFrame#section {{
+    border: 1px solid transparent;
+}}
+QPushButton, QPushButton#muteButton, QPushButton#soloButton {{
+    border: 1px solid transparent;
+}}
+QPushButton:hover, QPushButton#muteButton:hover, QPushButton#soloButton:hover {{
+    border-color: transparent;
+}}
+QLabel#stripName {{
+    font-weight: 500;
+    color: {TEXT_SECONDARY};
+}}
+QLabel#knobLabel {{
+    color: {TEXT_MUTED};
+    font-weight: 400;
+}}
+QLabel#faderValue {{
+    font-weight: 500;
+}}
+QLabel#masterTitle {{
+    font-weight: 500;
+}}
+QGroupBox {{
+    border-color: transparent;
 }}
 """

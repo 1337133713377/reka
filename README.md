@@ -25,7 +25,7 @@ Voicemeeter pour le son, tes plugins VST pour les effets, **une seule fenêtre**
 
 <br><br>
 
-[Aperçu](#apercu) · [Démarrer](#demarrer) · [Fonctions](#fonctions) · [Écoute](#ecoute) · [Thèmes](#themes) · [Discord](#discord) · [Moteurs d'effets](#moteurs) · [Aide](#aide)
+[Aperçu](#apercu) · [Démarrer](#demarrer) · [Fonctions](#fonctions) · [Écoute](#ecoute) · [Interface](#interface) · [Thèmes](#themes) · [Discord](#discord) · [Moteurs d'effets](#moteurs) · [Aide](#aide)
 
 </div>
 
@@ -257,6 +257,44 @@ au lieu du milieu de ta tête.
 Ça marche avec **n'importe quel moteur d'effets** et coûte moins de 1 % d'un cœur du
 processeur. Pour le vrai 7.1 des jeux : *Paramètres son de Windows* → **Voicemeeter Input** →
 *Configurer* → **7.1 Surround**.
+
+<br>
+
+<a id="interface"></a>
+
+## 🖥️ Quatre styles d'interface
+
+⚙ → **Interface** : ce n'est plus seulement la couleur qui change, mais la forme de toute la console. Panneaux, knobs, faders, VU-mètres, police et fond. Chaque style a un aperçu réel avant de l'appliquer.
+
+<table>
+<tr>
+<td width="33%" align="center"><img src="docs/interface-cantabile.png" alt="Style Cantabile : canaux en lignes, gris plats"><br><b>Cantabile</b><br><sub>logiciel de scène, canaux en lignes</sub></td>
+<td width="33%" align="center"><img src="docs/interface-retro.png" alt="Style Lecteur 2000 : métal, LCD verts"><br><b>Lecteur 2000</b><br><sub>métal en relief, LCD, égaliseur animé</sub></td>
+<td width="33%" align="center"><img src="docs/interface-minimal.png" alt="Style Minimal : aplats sans bordure"><br><b>Minimal</b><br><sub>DAW moderne, aplats, tout en finesse</sub></td>
+</tr>
+</table>
+
+<p align="center">
+  <sub>Et toujours le style <b>REKA</b> d'origine.</sub>
+</p>
+
+<details>
+<summary><b>🧩 Régler la disposition</b></summary>
+
+<br>
+
+<img src="docs/reglages-interface.png" alt="Réglages, onglet Interface : les quatre styles avec leur aperçu" width="420" align="right">
+
+- **Densité** : compacte, normale ou aérée.
+- **Strips** : verticales (console) ou horizontales (rack, une ligne par canal, fader et VU couchés).
+- **Animations** : activées, réduites (sans pulsation ni fondu) ou désactivées.
+- **Garder mes couleurs** : la forme du style, avec ton thème et tes couleurs par-dessus (mode mixte).
+
+Choisir un style applique sa disposition conseillée (Cantabile passe en lignes, Minimal en aéré), que tu peux changer ensuite.
+
+<br clear="right">
+
+</details>
 
 <br>
 

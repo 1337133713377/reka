@@ -309,5 +309,5 @@ class AppMixerPopup(QFrame):
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         p.setPen(QPen(QColor(styles.GREEN_DIM), 1))
         p.setBrush(QColor(styles.BG_COLUMN))
-        p.drawRoundedRect(QRectF(0.5, 0.5, self.width() - 1, self.height() - 1), 10, 10)
+        styles.draw_box(p, QRectF(0.5, 0.5, self.width() - 1, self.height() - 1), 10)
 

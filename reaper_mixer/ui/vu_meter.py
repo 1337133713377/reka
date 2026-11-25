@@ -1,5 +1,6 @@
 """
-VU-mètre stéréo vertical custom (paintEvent, antialiasé) : vert → jaune → rouge.
+VU-mètre stéréo custom (paintEvent, antialiasé) : vert → jaune → rouge.
+Vertical, ou horizontal (barres empilées, niveau de gauche à droite).
 
 Même loi de course que le fader (graduations alignées). Balistique simple :
 montée instantanée, retombée progressive, maintien du pic, LED de saturation.
@@ -32,7 +33,8 @@ def _gradient_stop(db: float) -> float:
 class VuMeter(QWidget):
     def __init__(self, channels: int = 2, bar_width: int = 3, gap: int = 2,
                  margin_top: int = TRACK_MARGIN, margin_bottom: int = TRACK_MARGIN,
-                 clip_leds: bool = False, parent: QWidget | None = None) -> None:
+                 clip_leds: bool = False, parent: QWidget | None = None,
+                 orientation: Qt.Orientation = Qt.Orientation.Vertical) -> None:
         super().__init__(parent)
         self._channels = channels
         self._bar_w = bar_width
@@ -45,12 +47,31 @@ class VuMeter(QWidget):
         self._peak_t = [0.0] * channels
         self._clip_until = [0.0] * channels
         self._t = time.monotonic()
+        self._orientation = Qt.Orientation.Vertical
         self.color_scope: int | str | None = None   # canal ou Master (couleur personnalisée)
-        width = channels * bar_width + (channels - 1) * gap + (6 if clip_leds else 0)
-        self.setFixedWidth(width)
-        self.setMinimumHeight(60)
-        self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Expanding)
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self.setOrientation(orientation)
+
+    def orientation(self) -> Qt.Orientation:
+        return self._orientation
+
+    def setOrientation(self, orientation: Qt.Orientation) -> None:  # noqa: N802
+        """Vertical (+12 dB en haut) ou horizontal (+12 dB à droite)."""
+        self._orientation = orientation
+        thickness = (self._channels * self._bar_w + (self._channels - 1) * self._gap
+                     + (6 if self._clip_leds else 0))
+        self.setMinimumSize(0, 0)
+        self.setMaximumSize(16777215, 16777215)
+        if orientation == Qt.Orientation.Horizontal:
+            self.setFixedHeight(thickness)
+            self.setMinimumWidth(60)
+            self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        else:
+            self.setFixedWidth(thickness)
+            self.setMinimumHeight(60)
+            self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Expanding)
+        self.updateGeometry()
+        self.update()
 
     def set_levels(self, levels: tuple[float, ...]) -> None:
         now = time.monotonic()
@@ -71,11 +92,22 @@ class VuMeter(QWidget):
         now = time.monotonic()
         return any(until > now for until in self._clip_until)
 
+    def levels_shown(self) -> list[float]:
+        """Niveaux affichés (avec la retombée), en dB."""
+        return list(self._shown)
+
     def paintEvent(self, _event) -> None:  # noqa: N802
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        top, bottom = float(self._margin_top), float(self.height() - self._margin_bottom)
+        length = float(self.height())
+        if self._orientation == Qt.Orientation.Horizontal:
+            # Dessin vertical dans un repère tourné : +12 dB à droite
+            length = float(self.width())
+            p.translate(self.width(), 0)
+            p.rotate(90)
+        top, bottom = float(self._margin_top), length - self._margin_bottom
         height = max(1.0, bottom - top)
+        shape = styles.vu_shape()
 
         gradient = QLinearGradient(0, bottom, 0, top)
         # Couleur du thème (niveaux normaux) → jaune (zone haute) → rouge (crêtes)
@@ -89,12 +121,21 @@ class VuMeter(QWidget):
 
         offset = 3 if self._clip_leds else 0
         now = time.monotonic()
+        off_opacity = {"flat": 0.0, "line": 0.0, "lcd": 0.22}.get(shape, 0.16)
         for i in range(self._channels):
             x = offset + i * (self._bar_w + self._gap)
             bar = QRectF(x, top, self._bar_w, height)
+            # Fond de la barre selon le style
+            if shape == "flat":
+                p.fillRect(bar, QColor(styles.BG_DEEP))
+            elif shape == "line":
+                p.fillRect(bar, styles.color(styles.TEXT_MUTED, 0.14))
+            elif shape == "lcd":
+                p.fillRect(bar.adjusted(-1, -1, 1, 1), QColor(styles.LCD_BG))
             # LED éteintes : le dégradé en très sombre
-            p.setOpacity(0.16)
-            p.fillRect(bar, gradient)
+            if off_opacity:
+                p.setOpacity(off_opacity)
+                p.fillRect(bar, gradient)
             # LED allumées
             p.setOpacity(1.0)
             level_y = top + db_to_ratio(self._shown[i]) * height
@@ -110,12 +151,14 @@ class VuMeter(QWidget):
                     peak_color = styles.VU_YELLOW
                 else:
                     peak_color = styles.TEXT_PRIMARY
-                p.fillRect(QRectF(x, peak_y - 1, self._bar_w, 2), QColor(peak_color))
-            # Segmentation, selon le style choisi (styles.VU_STYLE)
+                p.fillRect(QRectF(x, peak_y - 1, self._bar_w, 2 if shape != "line" else 1.5),
+                           QColor(peak_color))
+            # Segmentation, selon le style choisi (styles.VU_STYLE ou celui de l'interface)
             p.setPen(Qt.PenStyle.NoPen)
-            if styles.VU_STYLE != "continu":
-                step, gap = (6, 2) if styles.VU_STYLE == "led" else (SEGMENT_PX, 1)
-                shade = styles.color(styles.BG_SECTION, 0.85 if gap > 1 else 0.55)
+            if shape in ("segments", "led", "lcd"):
+                step, gap = {"led": (6, 2), "lcd": (4, 1.5)}.get(shape, (SEGMENT_PX, 1))
+                back = styles.LCD_BG if shape == "lcd" else styles.BG_SECTION
+                shade = styles.color(back, 0.85 if gap > 1 else 0.55)
                 y = top + step
                 while y < bottom:
                     p.fillRect(QRectF(x, y, self._bar_w, gap), shade)

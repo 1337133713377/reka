@@ -116,11 +116,27 @@ class Knob(QWidget):
         arc_rect = QRectF(center.x() - (d - ring) / 2, center.y() - (d - ring) / 2,
                           d - ring, d - ring)
         pos = max(0.0, min(1.0, self._shown))
-        span_value = -SPAN * pos
-        arc = int(START_ANGLE * 16)
         accent = styles.accent(self.color_element, self.color_scope)
         dim = styles.accent_dim(self.color_element, self.color_scope)
+        shape = styles.INTERFACE.knob
+        if shape == "flat":
+            self._paint_flat(p, center, arc_rect, d, ring, pos, accent, dim)
+        elif shape == "chrome":
+            self._paint_chrome(p, center, d, ring, pos, accent, dim)
+        elif shape == "arc":
+            self._paint_arc(p, center, arc_rect, ring, pos, accent, dim)
+        else:
+            self._paint_reka(p, center, arc_rect, d, ring, pos, accent, dim)
 
+    @staticmethod
+    def _direction(pos: float) -> QPointF:
+        angle = math.radians(START_ANGLE - SPAN * pos)
+        return QPointF(math.cos(angle), -math.sin(angle))
+
+    def _paint_reka(self, p, center, arc_rect, d, ring, pos, accent, dim) -> None:
+        """Style d'origine : halo, arc épais, bouton en relief, index blanc."""
+        arc = int(START_ANGLE * 16)
+        span_value = -SPAN * pos
         if self._active:
             # Halo, piste, puis arc de valeur
             p.setPen(QPen(styles.color(accent, 0.16), ring * 2.0,
@@ -134,16 +150,7 @@ class Knob(QWidget):
                               Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
                 p.drawArc(arc_rect, arc, int(span_value * 16))
         else:
-            # Éteint : piste à peine visible + point vert au départ de la course
-            p.setPen(QPen(styles.color(dim, 0.25), ring * 0.6,
-                          Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
-            p.drawArc(arc_rect, arc, int(-SPAN * 16))
-            start = math.radians(START_ANGLE)
-            r = arc_rect.width() / 2
-            dot = QPointF(center.x() + r * math.cos(start), center.y() - r * math.sin(start))
-            p.setPen(Qt.PenStyle.NoPen)
-            p.setBrush(styles.color(accent, 0.85))
-            p.drawEllipse(dot, ring * 0.45, ring * 0.45)
+            self._paint_off_track(p, center, arc_rect, ring, accent, dim)
 
         # Bouton central
         cap_r = d / 2 - ring - max(2.0, ring * 0.55)
@@ -155,12 +162,85 @@ class Knob(QWidget):
         p.drawEllipse(center, cap_r, cap_r)
 
         # Indicateur blanc du centre vers le bord
-        angle = math.radians(START_ANGLE - SPAN * pos)
-        direction = QPointF(math.cos(angle), -math.sin(angle))
+        direction = self._direction(pos)
         width = max(2.0, d * 0.055)
         p.setPen(QPen(styles.color(styles.WHITE, 0.95 if self._active else 0.75), width,
                       Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
         p.drawLine(center + direction * (cap_r * 0.25), center + direction * (cap_r * 0.78))
+
+    def _paint_off_track(self, p, center, arc_rect, ring, accent, dim) -> None:
+        """Éteint : piste à peine visible + point au départ de la course."""
+        p.setPen(QPen(styles.color(dim, 0.25), ring * 0.6,
+                      Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+        p.drawArc(arc_rect, int(START_ANGLE * 16), int(-SPAN * 16))
+        start = math.radians(START_ANGLE)
+        r = arc_rect.width() / 2
+        dot = QPointF(center.x() + r * math.cos(start), center.y() - r * math.sin(start))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(styles.color(accent, 0.85))
+        p.drawEllipse(dot, ring * 0.45, ring * 0.45)
+
+    def _paint_flat(self, p, center, arc_rect, d, ring, pos, accent, dim) -> None:
+        """« Cantabile » : arc fin sans halo, bouton plat, index clair."""
+        arc = int(START_ANGLE * 16)
+        thin = max(2.0, ring * 0.7)
+        p.setPen(QPen(QColor(styles.BUTTON_BG if self._active else styles.BG_SECTION), thin,
+                      Qt.PenStyle.SolidLine, Qt.PenCapStyle.FlatCap))
+        p.drawArc(arc_rect, arc, int(-SPAN * 16))
+        if self._active and pos > 0.002:
+            p.setPen(QPen(QColor(accent), thin, Qt.PenStyle.SolidLine, Qt.PenCapStyle.FlatCap))
+            p.drawArc(arc_rect, arc, int(-SPAN * pos * 16))
+        cap_r = d / 2 - ring - 1.5
+        p.setBrush(QColor(styles.KNOB_CAP_TOP))
+        p.setPen(QPen(QColor(styles.BORDER_COLUMN), 1))
+        p.drawEllipse(center, cap_r, cap_r)
+        direction = self._direction(pos)
+        p.setPen(QPen(QColor(styles.TEXT_PRIMARY if self._active else styles.TEXT_MUTED),
+                      max(1.6, d * 0.05), Qt.PenStyle.SolidLine, Qt.PenCapStyle.FlatCap))
+        p.drawLine(center + direction * (cap_r * 0.2), center + direction * cap_r)
+
+    def _paint_chrome(self, p, center, d, ring, pos, accent, dim) -> None:
+        """« Lecteur 2000 » : couronne de LED, bouton chromé, encoche sombre."""
+        ticks = 11
+        outer = d / 2
+        for n in range(ticks):
+            t = n / (ticks - 1)
+            direction = self._direction(t)
+            lit = self._active and pos > 0.002 and t <= pos + 0.001
+            p.setPen(QPen(QColor(accent) if lit else styles.color(dim, 0.55 if self._active else 0.3),
+                          max(1.6, d * 0.05), Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+            p.drawLine(center + direction * (outer - ring * 0.9), center + direction * (outer - 0.5))
+        cap_r = outer - ring * 1.25
+        gradient = QRadialGradient(center.x() - cap_r * 0.35, center.y() - cap_r * 0.45, cap_r * 1.7)
+        gradient.setColorAt(0, QColor(styles.KNOB_CAP_TOP))
+        gradient.setColorAt(0.55, QColor(styles.mix(styles.KNOB_CAP_TOP, styles.KNOB_CAP_BOTTOM, 0.5)))
+        gradient.setColorAt(1, QColor(styles.KNOB_CAP_BOTTOM))
+        p.setBrush(gradient)
+        p.setPen(QPen(styles.color(styles.BG_BLACK, 0.6), 1))
+        p.drawEllipse(center, cap_r, cap_r)
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.setPen(QPen(styles.color(styles.WHITE, 0.5), 1))
+        p.drawEllipse(center, cap_r - 1.5, cap_r - 1.5)
+        direction = self._direction(pos)
+        p.setPen(QPen(QColor("#1d2228" if self._active else "#5a626d"), max(1.8, d * 0.06),
+                      Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+        p.drawLine(center + direction * (cap_r * 0.3), center + direction * (cap_r * 0.85))
+
+    def _paint_arc(self, p, center, arc_rect, ring, pos, accent, dim) -> None:
+        """« Minimal » : un arc fin et un point, sans bouton."""
+        arc = int(START_ANGLE * 16)
+        thin = max(1.8, ring * 0.55)
+        p.setPen(QPen(styles.color(styles.TEXT_MUTED, 0.3), thin,
+                      Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+        p.drawArc(arc_rect, arc, int(-SPAN * 16))
+        ink = QColor(accent) if self._active else styles.color(styles.TEXT_MUTED, 0.8)
+        if self._active and pos > 0.002:
+            p.setPen(QPen(ink, thin, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+            p.drawArc(arc_rect, arc, int(-SPAN * pos * 16))
+        r = arc_rect.width() / 2
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(ink)
+        p.drawEllipse(center + self._direction(pos) * r, thin * 1.1, thin * 1.1)
 
     # ------------------------------------------------------------ interaction
     def mousePressEvent(self, event) -> None:  # noqa: N802
@@ -230,7 +310,7 @@ class Knob(QWidget):
     # ----------------------------------------------------------- animation
     def _retarget(self) -> None:
         self._update_tooltip()
-        if self._smooth:
+        if self._smooth and styles.animations("reduced"):
             if not self._timer.isActive():
                 self._timer.start()
         else:

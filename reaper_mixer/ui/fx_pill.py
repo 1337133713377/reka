@@ -116,16 +116,20 @@ class FxPill(QWidget):
             border = styles.color(styles.accent_bright("fx_pill", self.color_scope), 0.55)
         else:
             border = QColor(styles.mix(styles.PILL_BORDER, custom, 0.55) if custom else styles.PILL_BORDER)
+        lcd = styles.INTERFACE.lcd           # « Lecteur 2000 » : afficheur LCD
         base = styles.mix(styles.PILL_BG, custom, 0.3) if custom else styles.PILL_BG
         fill = QColor(base).lighter(125 if self._hover else 100)
         p.setPen(QPen(border, 1))
         p.setBrush(fill)
-        p.drawRoundedRect(rect, 5, 5)
+        styles.draw_box(p, rect, 5, sunken=lcd)
 
         f = styles.font(10, QFont.Weight.Medium)
+        if lcd:
+            f.setFamilies(["Consolas", "Lucida Console", "Courier New", styles.FONT_FAMILY])
         f.setStrikeOut(not self._enabled)
         p.setFont(f)
-        p.setPen(QColor(styles.TEXT_PRIMARY if self._enabled else styles.TEXT_MUTED))
+        text_color = styles.LCD_TEXT if lcd else styles.TEXT_PRIMARY
+        p.setPen(QColor(text_color if self._enabled else styles.TEXT_MUTED))
         text_rect = rect.adjusted(PADDING_X, 0, -PADDING_X - (8 if self.slow else 0), 0)
         text = p.fontMetrics().elidedText(self._name, Qt.TextElideMode.ElideRight,
                                           int(text_rect.width()))

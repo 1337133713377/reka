@@ -22,8 +22,9 @@ from pathlib import Path
 
 from PySide6.QtCore import QByteArray, QEvent, QPointF, QProcess, QPropertyAnimation, Qt, QTimer
 from PySide6.QtGui import QAction, QColor, QPainter, QPixmap, QRadialGradient
-from PySide6.QtWidgets import (QApplication, QGraphicsOpacityEffect, QHBoxLayout, QLabel,
-                               QMainWindow, QMenu, QMessageBox, QSystemTrayIcon, QWidget)
+from PySide6.QtGui import QLinearGradient
+from PySide6.QtWidgets import (QApplication, QBoxLayout, QGraphicsOpacityEffect, QHBoxLayout,
+                               QLabel, QMainWindow, QMenu, QMessageBox, QSystemTrayIcon, QWidget)
 from shiboken6 import delete as delete_now
 from shiboken6 import isValid
 
@@ -37,7 +38,7 @@ from core.media import MediaBackend, NullMedia
 from core.process_manager import installed_voicemeeter_kinds, is_blank_project, reaper_project
 from core.updater import UpdateChecker, UpdateInfo
 from core.voicemeeter_ctrl import DEFAULT_ROUTING, MixerLevels, MixerParams
-from ui import styles
+from ui import interfaces, styles
 from ui.app_mixer import AppMixerPopup
 from ui.fx_pill import format_cost
 from ui.master_widget import MasterWidget
@@ -151,11 +152,27 @@ class Background(QWidget):
                          self._scaled)
             p.fillRect(self.rect(), styles.color(styles.BG_BLACK, self._darkness))
             return
+        if styles.INTERFACE.background == "flat":
+            return
+        if styles.INTERFACE.background == "brushed":
+            self._paint_brushed(p, w, h)
+            return
         gradient = QRadialGradient(QPointF(w * 0.68, h * 0.42), max(w, h) * 0.62)
         gradient.setColorAt(0.0, styles.color(styles.BG_GLOW, 0.95))
         gradient.setColorAt(0.55, styles.color(styles.BG_GLOW, 0.35))
         gradient.setColorAt(1.0, styles.color(styles.BG_GLOW, 0.0))
         p.fillRect(self.rect(), gradient)
+
+    @staticmethod
+    def _paint_brushed(p: QPainter, w: int, h: int) -> None:
+        """« Lecteur 2000 » : métal brossé, plus clair en haut, fines stries."""
+        gradient = QLinearGradient(0, 0, 0, h)
+        gradient.setColorAt(0.0, QColor(styles.BG_GLOW))
+        gradient.setColorAt(0.5, QColor(styles.mix(styles.BG_GLOW, styles.BG_WINDOW, 0.6)))
+        gradient.setColorAt(1.0, QColor(styles.BG_WINDOW))
+        p.fillRect(0, 0, w, h, gradient)
+        for y in range(0, h, 3):
+            p.fillRect(0, y, w, 1, styles.color(styles.WHITE, 0.025 if (y // 3) % 2 else 0.0))
 
 
 class Toast(QLabel):
@@ -179,7 +196,7 @@ class Toast(QLabel):
     def refresh_style(self) -> None:
         self.setStyleSheet(
             f"background: {styles.BG_COLUMN}; border: 1px solid {styles.GREEN_DIM};"
-            f"border-radius: 10px; padding: 8px 14px; color: {styles.TEXT_PRIMARY};")
+            f"border-radius: {styles.rad(10):g}px; padding: 8px 14px; color: {styles.TEXT_PRIMARY};")
 
     def show_message(self, text: str) -> None:
         self.setText(text)
@@ -194,6 +211,10 @@ class Toast(QLabel):
         self._timer.start(TOAST_MS)
 
     def _animate(self, target: float) -> None:
+        if not styles.animations():               # animations réduites : sans fondu
+            self._effect.setOpacity(target)
+            self._after_fade()
+            return
         self._fade.stop()
         self._fade.setStartValue(self._effect.opacity())
         self._fade.setEndValue(target)
@@ -246,6 +267,10 @@ class MainWindow(QMainWindow):
         layout = QHBoxLayout(self.background)
         layout.setContentsMargins(12, 12, 14, 12)
         layout.setSpacing(STRIP_GAP)
+        # Strips : en colonnes côte à côte (console) ou en lignes empilées (rack)
+        self.strip_box = QBoxLayout(QBoxLayout.Direction.LeftToRight)
+        self.strip_box.setSpacing(STRIP_GAP)
+        layout.addLayout(self.strip_box, 1)
 
         routing = cfg.get("voicemeeter", {}).get("routing", DEFAULT_ROUTING)
         labels = [route.get("label", route.get("bus", "?")) for route in routing]
@@ -261,9 +286,9 @@ class MainWindow(QMainWindow):
                                 pad_mode=pad_modes[index] if index < len(pad_modes) else None,
                                 apps_button=self._apps.available and virtual is not None)
             self._wire_strip(strip)
-            layout.addWidget(strip)
+            self.strip_box.addWidget(strip)
             self.strips.append(strip)
-        layout.addStretch(1)
+        self.strip_box.addStretch(1)
 
         self.master = MasterWidget()
         self.master.headphoneChanged.connect(vm.set_headphone_gain)
@@ -286,6 +311,7 @@ class MainWindow(QMainWindow):
 
         self.toast = Toast(self.background)
         self._tray = self._make_tray()
+        self._orientation = self._density = None   # disposition appliquée par apply_appearance
         self.apply_appearance()
         self._restore_geometry()
 
@@ -971,30 +997,56 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------ apparence
     def apply_appearance(self) -> None:
-        """Thème de couleur, arrière-plan et transparence des panneaux, d'après la config."""
+        """Style d'interface, thème de couleur, disposition, arrière-plan et
+        transparence des panneaux, d'après la config."""
         ui_cfg = self._cfg.get("ui", {})
         theme = ui_cfg.get("theme", styles.DEFAULT_THEME)
-        theme_changed = theme != styles.current_theme()
-        if theme_changed:
-            styles.set_theme(theme)
-        if styles.configure(ui_cfg):          # police, style des faders / VU
-            theme_changed = True
+        changed = styles.configure(ui_cfg)   # style d'interface, police, faders / VU, disposition
+        if changed or theme != styles.current_theme():
+            styles.set_theme(theme)          # la palette dépend du style d'interface
+            changed = True
         self.background.set_image(background_image_path(self._cfg),
                                   float(ui_cfg.get("background_darkness", DEFAULT_DARKNESS)))
         app = QApplication.instance()
         if app is not None:
             styles.refresh(app, float(ui_cfg.get("panel_opacity", DEFAULT_PANEL_OPACITY)))
+        self.apply_layout()
         for strip in self.strips:             # couleurs par élément (feuilles de style)
             strip.apply_colors()
         self.master.apply_colors()
+        self.master.apply_interface()
         self._update_media()
         self._update_load()
-        if theme_changed:
+        if changed:
             # Widgets dessinés à la main : ils relisent la palette en se redessinant
             self.toast.refresh_style()
             for widget in self.findChildren(QWidget):
                 widget.update()
             self.update()
+
+    def apply_layout(self) -> None:
+        """Orientation des strips et densité (réglages → Interface)."""
+        orientation, density = styles.ORIENTATION, styles.DENSITY
+        changed = (orientation, density) != (self._orientation, self._density)
+        horizontal = orientation == interfaces.HORIZONTAL
+        self.strip_box.setDirection(QBoxLayout.Direction.TopToBottom if horizontal
+                                    else QBoxLayout.Direction.LeftToRight)
+        gap = styles.spacing(STRIP_GAP)
+        self.strip_box.setSpacing(gap)
+        layout = self.background.layout()
+        layout.setSpacing(gap)
+        margin = styles.spacing(12)
+        layout.setContentsMargins(margin, margin, margin + 2, margin)
+        for strip in self.strips:
+            strip.set_layout(orientation, density)
+        self.master.set_density(density)
+        first = self._orientation is None
+        self._orientation, self._density = orientation, density
+        if changed and not first:
+            # Nouvelle disposition : la fenêtre prend la taille qui lui convient
+            layout.activate()
+            self._apply_minimum_size()
+            self.reset_window_size()
 
     # -------------------------------------------------------------- fenêtre
     def compact_size(self) -> tuple[int, int]:
@@ -1002,7 +1054,7 @@ class MainWindow(QMainWindow):
         width = self.background.layout().sizeHint().width()
         return width, COMPACT_HEIGHT
 
-    def _restore_geometry(self) -> None:
+    def _apply_minimum_size(self) -> None:
         width, _ = self.compact_size()
         # Hauteur minimale : celle prévue, sauf sur un petit écran (1280×720 logiques
         # à 150 %) où elle doit tenir au-dessus de la barre des tâches
@@ -1010,6 +1062,9 @@ class MainWindow(QMainWindow):
         area = self._screen_area()
         fit = area.height() - TITLE_BAR_ALLOWANCE if area is not None else MIN_HEIGHT
         self.setMinimumSize(width, max(layout_min, min(MIN_HEIGHT, fit)))
+
+    def _restore_geometry(self) -> None:
+        self._apply_minimum_size()
         ui_cfg = self._cfg.setdefault("ui", {})
         saved = ui_cfg.get("geometry")
         if ui_cfg.get("layout_version") != LAYOUT_VERSION:
