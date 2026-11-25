@@ -58,7 +58,7 @@ from core.listening import ListenController
 from core.engine_load import EngineLoadMonitor, create_monitor
 from core.updater import UpdateChecker, cleanup_previous, load_build_info
 from core.voicemeeter_ctrl import EDITIONS, VoicemeeterController, edition
-from ui import styles
+from ui import interfaces, styles
 from ui.main_window import MainWindow, launch_restart
 
 log = logging.getLogger("reaper_mixer")
@@ -782,7 +782,8 @@ def run_selftest(app: QApplication, cfg: dict, window: MainWindow, vm, reaper, p
 
     for path, widget in shots.items():
         capture(path, widget)
-    for title, suffix in (("Canaux", "canaux"), ("Apparence", "apparence"),
+    for title, suffix in (("Canaux", "canaux"), ("Interface", "interface_reglages"),
+                          ("Apparence", "apparence"),
                           ("Couleurs", "couleurs"), ("À propos", "apropos")):   # autres onglets
         index = next(i for i in range(settings.tabs.count()) if settings.tabs.tabText(i) == title)
         settings.tabs.setCurrentIndex(index)
@@ -824,6 +825,22 @@ def run_selftest(app: QApplication, cfg: dict, window: MainWindow, vm, reaper, p
         problems.append("thème de couleur non appliqué")
     capture(image.with_name(f"{image.stem}_theme{image.suffix}"), window)
     ui_cfg["theme"] = original
+    window.apply_appearance()
+
+    # Style d'interface appliqué à chaud (Lecteur 2000, canaux en lignes), puis retour
+    saved = {key: ui_cfg.get(key) for key in ("interface", "orientation", "density")}
+    interfaces.apply_interface(ui_cfg, "retro")
+    ui_cfg["orientation"] = interfaces.HORIZONTAL
+    window.apply_appearance()
+    pump(0.4)
+    if styles.INTERFACE.key != "retro" or window.strips[0].orientation() != interfaces.HORIZONTAL:
+        problems.append("style d'interface non appliqué")
+    capture(image.with_name(f"{image.stem}_interface{image.suffix}"), window)
+    for key, value in saved.items():
+        if value is None:
+            ui_cfg.pop(key, None)
+        else:
+            ui_cfg[key] = value
     window.apply_appearance()
 
     report.extend(f"ERREUR {p}" for p in problems)

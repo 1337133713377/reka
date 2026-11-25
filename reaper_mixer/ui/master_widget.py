@@ -3,28 +3,35 @@ Panneau master : titre + engrenage (réglages), badge de connexion, boutons
 pour afficher Voicemeeter / REAPER, knob du casque (bus A1) avec son
 interpolation douce et les pastilles de l'écoute au casque (EQ, 3D),
 musique en cours (pochette, précédent / pause / suivant), VU-mètre master.
+Style « Lecteur 2000 » : égaliseur visuel animé, au rythme du son.
 """
 
 from __future__ import annotations
 
 import math
+import random
 
-from PySide6.QtCore import QEasingCurve, QPointF, QRectF, Qt, QVariantAnimation, Signal
-from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPen
+from PySide6.QtCore import QEasingCurve, QPointF, QRectF, Qt, QTimer, QVariantAnimation, Signal
+from PySide6.QtGui import QColor, QFont, QLinearGradient, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import (QAbstractButton, QFrame, QHBoxLayout, QLabel, QSizePolicy,
                                QVBoxLayout, QWidget)
 
 from core.engine_load import CPU_HIGH, CPU_WARN, GPU_HIGH, GPU_WARN, EngineLoad, level
-from ui import styles
-from ui.fader import format_db
+from ui import interfaces, styles
+from ui.fader import FADER_MIN_DB, format_db
 from ui.knob import Knob
 from ui.media_widget import MediaWidget
 from ui.strip_widget import make_section
 from ui.vu_meter import VuMeter
 
 MASTER_WIDTH = 138
+MASTER_WIDTHS = {"compacte": 136, "normale": MASTER_WIDTH, "aeree": 152}   # selon la densité
 HEADPHONE_KNOB = 72
 PULSE_MS = 1500
+VISUALIZER_BANDS = 12
+VISUALIZER_HEIGHT = 52
+VISUALIZER_MS = {"on": 33, "reduced": 90}   # cadence de l'égaliseur selon les animations
+VISUALIZER_FALL = 0.045                     # retombée des barres par image
 
 
 class GearButton(QAbstractButton):
@@ -42,7 +49,7 @@ class GearButton(QAbstractButton):
         hover = self.underMouse()
         p.setPen(Qt.PenStyle.NoPen)
         p.setBrush(QColor(styles.BUTTON_HOVER if hover else styles.BUTTON_BG))
-        p.drawRoundedRect(QRectF(0, 0, self.width(), self.height()), 7, 7)
+        styles.draw_box(p, QRectF(0, 0, self.width(), self.height()), 7)
 
         c = QPointF(self.width() / 2, self.height() / 2)
         outer, inner, teeth = 7.0, 5.2, 8
@@ -92,7 +99,7 @@ class MinimizeButton(QAbstractButton):
         hover = self.underMouse()
         p.setPen(Qt.PenStyle.NoPen)
         p.setBrush(QColor(styles.BUTTON_HOVER if hover else styles.BUTTON_BG))
-        p.drawRoundedRect(QRectF(0, 0, self.width(), self.height()), 7, 7)
+        styles.draw_box(p, QRectF(0, 0, self.width(), self.height()), 7)
         p.setPen(QPen(QColor(styles.TEXT_PRIMARY if hover else styles.TEXT_SECONDARY), 1.8,
                       Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
         y = self.height() / 2 + 3
@@ -129,8 +136,13 @@ class ConnectionBadge(QWidget):
     def set_status(self, ok: bool, text: str, detail: str = "") -> None:
         self._ok, self._text = ok, text
         self.setToolTip(detail or text)
-        if ok:
-            self._pulse.start()
+        self.refresh_animation()
+
+    def refresh_animation(self) -> None:
+        """Le point pulse quand tout est connecté, si les animations le permettent."""
+        if self._ok and styles.animations():
+            if self._pulse.state() != QVariantAnimation.State.Running:
+                self._pulse.start()
         else:
             self._pulse.stop()
             self._opacity = 1.0
@@ -146,12 +158,12 @@ class ConnectionBadge(QWidget):
         rect = QRectF(0.5, 0.5, self.width() - 1, self.height() - 1)
         p.setPen(QPen(QColor(styles.BORDER_COLUMN), 1))
         p.setBrush(QColor(styles.BG_DEEP))
-        p.drawRoundedRect(rect, rect.height() / 2, rect.height() / 2)
+        styles.draw_box(p, rect, rect.height() / 2, sunken=True)
 
         dot = QColor(styles.GREEN_NEON if self._ok else styles.RED_MUTE)
         center = QPointF(12, rect.center().y())
         p.setPen(Qt.PenStyle.NoPen)
-        if self._ok:
+        if self._ok and styles.INTERFACE.glow:
             p.setBrush(styles.color(styles.GREEN_NEON, 0.25 * self._opacity))
             p.drawEllipse(center, 6, 6)
         dot.setAlphaF(self._opacity)
@@ -188,7 +200,7 @@ class ProjectButton(QAbstractButton):
         hover = self.underMouse()
         p.setPen(QPen(QColor(styles.GREEN_DIM if hover else styles.BORDER_COLUMN), 1))
         p.setBrush(QColor(styles.BUTTON_HOVER if hover else styles.BG_DEEP))
-        p.drawRoundedRect(rect, rect.height() / 2, rect.height() / 2)
+        styles.draw_box(p, rect, rect.height() / 2)
         # Petite icône de dossier
         p.setPen(QPen(QColor(styles.TEXT_SECONDARY), 1.2))
         p.setBrush(Qt.BrushStyle.NoBrush)
@@ -236,7 +248,7 @@ class UpdateButton(QAbstractButton):
         accent = QColor(styles.GREEN_BRIGHT if self.underMouse() else styles.GREEN_NEON)
         p.setPen(Qt.PenStyle.NoPen)
         p.setBrush(accent)
-        p.drawRoundedRect(rect, rect.height() / 2, rect.height() / 2)
+        styles.draw_box(p, rect, rect.height() / 2)
         ink = QColor(styles.ON_ACCENT_DARK)
         # Flèche vers le haut
         p.setPen(QPen(ink, 1.6, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
@@ -301,7 +313,7 @@ class EngineButton(QAbstractButton):
             p.setPen(QPen(QColor(styles.accent_dim("engines", styles.MASTER_SCOPE) if hover
                                  else styles.BORDER_COLUMN), 1))
             p.setBrush(QColor(styles.BUTTON_HOVER if hover else styles.BG_DEEP))
-        p.drawRoundedRect(rect, rect.height() / 2, rect.height() / 2)
+        styles.draw_box(p, rect, rect.height() / 2, sunken=self._shown)
         p.setFont(styles.font(9, QFont.Weight.DemiBold))
         p.setPen(QColor(styles.TEXT_PRIMARY if self._shown or hover else styles.TEXT_SECONDARY))
         text_rect = rect.adjusted(5, 0, -5, 0)
@@ -349,7 +361,7 @@ class ListenToggle(QAbstractButton):
             p.setPen(QPen(QColor(styles.accent_dim("headphone", styles.MASTER_SCOPE) if hover
                                  else styles.BORDER_COLUMN), 1))
             p.setBrush(QColor(styles.BUTTON_HOVER if hover else styles.BG_DEEP))
-        p.drawRoundedRect(rect, rect.height() / 2, rect.height() / 2)
+        styles.draw_box(p, rect, rect.height() / 2, sunken=on)
         p.setFont(styles.font(8, QFont.Weight.DemiBold))
         p.setPen(QColor(accent if on else styles.TEXT_PRIMARY if hover else styles.TEXT_MUTED))
         p.drawText(rect, Qt.AlignmentFlag.AlignCenter, self._label)
@@ -407,7 +419,7 @@ class LoadMeter(QWidget):
         rect = QRectF(0.5, 0.5, self.width() - 1, self.height() - 1)
         p.setPen(QPen(QColor(styles.BORDER_COLUMN), 1))
         p.setBrush(QColor(styles.BG_DEEP))
-        p.drawRoundedRect(rect, 8, 8)
+        styles.draw_box(p, rect, 8, sunken=True)
         colors = (styles.accent("engines", styles.MASTER_SCOPE), styles.SOLO_ON, styles.VU_RED)
         for n, (name, value, state) in enumerate(self.rows()):
             top = self.PADDING + n * self.ROW
@@ -422,11 +434,91 @@ class LoadMeter(QWidget):
             bar = QRectF(36, top + self.ROW / 2 - 2, max(8.0, self.width() - 36 - 44), 4)
             p.setPen(Qt.PenStyle.NoPen)
             p.setBrush(QColor(styles.BUTTON_BG))
-            p.drawRoundedRect(bar, 2, 2)
+            p.drawRoundedRect(bar, styles.rad(2), styles.rad(2))
             filled = bar.width() * max(0.0, min(100.0, value)) / 100.0
             if filled > 0:
                 p.setBrush(QColor(colors[state]))
-                p.drawRoundedRect(QRectF(bar.x(), bar.y(), max(2.0, filled), bar.height()), 2, 2)
+                p.drawRoundedRect(QRectF(bar.x(), bar.y(), max(2.0, filled), bar.height()),
+                                  styles.rad(2), styles.rad(2))
+
+
+class Visualizer(QWidget):
+    """Égaliseur visuel animé (style « Lecteur 2000 ») : des barres qui dansent au
+    niveau du Master, chapeaux qui retombent doucement. Décoratif : le niveau
+    réel est celui du VU-mètre."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._level = 0.0                          # 0 → 1, niveau du Master
+        self._bars = [0.0] * VISUALIZER_BANDS
+        self._caps = [0.0] * VISUALIZER_BANDS
+        self._wobble = [random.random() for _ in range(VISUALIZER_BANDS)]
+        self._rng = random.Random(7)
+        self.setFixedHeight(VISUALIZER_HEIGHT)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self._timer = QTimer(self)
+        self._timer.timeout.connect(self.step)
+
+    def bars(self) -> list[float]:
+        return list(self._bars)
+
+    def running(self) -> bool:
+        return self._timer.isActive()
+
+    def set_levels(self, levels: tuple[float, ...]) -> None:
+        db = max(levels) if levels else FADER_MIN_DB
+        self._level = max(0.0, min(1.0, (db - FADER_MIN_DB) / -FADER_MIN_DB))
+
+    def refresh_animation(self) -> None:
+        """Démarre ou arrête l'animation (style, animations permises, visibilité)."""
+        interval = VISUALIZER_MS.get(styles.ANIMATIONS)
+        if interval and self.isVisible() and styles.INTERFACE.visualizer:
+            self._timer.start(interval)
+        else:
+            self._timer.stop()
+
+    def step(self) -> None:
+        """Une image : chaque bande vise le niveau, façonné (basses plus fortes) et agité."""
+        if self.window().isMinimized():         # fenêtre réduite : rien à dessiner
+            return
+        for n in range(VISUALIZER_BANDS):
+            self._wobble[n] += (self._rng.random() - self._wobble[n]) * 0.35
+            shape = 1.0 - 0.45 * n / (VISUALIZER_BANDS - 1)
+            target = self._level ** 1.6 * shape * (0.45 + 0.75 * self._wobble[n])
+            target = max(0.0, min(1.0, target))
+            if target > self._bars[n]:
+                self._bars[n] = target
+            else:
+                self._bars[n] = max(target, self._bars[n] - VISUALIZER_FALL)
+            self._caps[n] = max(self._bars[n], self._caps[n] - VISUALIZER_FALL / 3)
+        self.update()
+
+    def paintEvent(self, _event) -> None:  # noqa: N802
+        p = QPainter(self)
+        rect = QRectF(0, 0, self.width(), self.height())
+        p.fillRect(rect, QColor(styles.LCD_BG))
+        styles.draw_bevel(p, rect, sunken=True)
+        inner = rect.adjusted(5, 5, -5, -5)
+        gap = 2.0
+        width = (inner.width() - gap * (VISUALIZER_BANDS - 1)) / VISUALIZER_BANDS
+        gradient = QLinearGradient(0, inner.bottom(), 0, inner.top())
+        gradient.setColorAt(0.0, QColor(styles.LCD_TEXT))
+        gradient.setColorAt(0.7, QColor(styles.VU_YELLOW))
+        gradient.setColorAt(1.0, QColor(styles.VU_RED))
+        for n in range(VISUALIZER_BANDS):
+            x = inner.left() + n * (width + gap)
+            column = QRectF(x, inner.top(), width, inner.height())
+            p.fillRect(column, styles.color(styles.LCD_TEXT, 0.08))
+            height = inner.height() * self._bars[n]
+            if height > 0.5:
+                p.fillRect(QRectF(x, inner.bottom() - height, width, height), gradient)
+            cap_y = inner.bottom() - inner.height() * self._caps[n]
+            p.fillRect(QRectF(x, max(inner.top(), cap_y - 2), width, 1.5), QColor(styles.TEXT_PRIMARY))
+            y = inner.bottom() - 3                 # segments LCD
+            while y > inner.top():
+                p.fillRect(QRectF(x, y, width, 1), styles.color(styles.LCD_BG, 0.8))
+                y -= 3
 
 
 class MasterWidget(QFrame):
@@ -511,6 +603,10 @@ class MasterWidget(QFrame):
         self.media.hide()                 # affiché si les contrôles média de Windows répondent
         layout.addWidget(self.media)
 
+        self.visualizer = Visualizer()    # style « Lecteur 2000 »
+        self.visualizer.hide()
+        layout.addWidget(self.visualizer)
+
         vu_section = make_section()
         vu_box = QHBoxLayout(vu_section)
         vu_box.setContentsMargins(0, 12, 0, 12)
@@ -524,6 +620,27 @@ class MasterWidget(QFrame):
 
         self._show_value(0.0)
         self.apply_colors()
+
+    def apply_interface(self) -> None:
+        """Éléments propres au style d'interface et aux animations."""
+        self.visualizer.setVisible(styles.INTERFACE.visualizer and styles.animations("reduced"))
+        self.visualizer.refresh_animation()
+        self.badge.refresh_animation()
+
+    def set_density(self, density: str) -> None:
+        factor = interfaces.density_factor(density)
+        self.setFixedWidth(MASTER_WIDTHS.get(density, MASTER_WIDTH))
+        layout = self.layout()
+        layout.setContentsMargins(*(round(m * factor) for m in (8, 10, 8, 8)))
+        layout.setSpacing(round(10 * factor))
+
+    def showEvent(self, event) -> None:  # noqa: N802
+        super().showEvent(event)
+        self.visualizer.refresh_animation()
+
+    def hideEvent(self, event) -> None:  # noqa: N802
+        super().hideEvent(event)
+        self.visualizer.refresh_animation()
 
     def apply_colors(self) -> None:
         """Fond du Master dans sa couleur choisie (le reste est dessiné à la main)."""
@@ -539,6 +656,7 @@ class MasterWidget(QFrame):
 
     def set_levels(self, levels: tuple[float, float]) -> None:
         self.vu.set_levels(levels)
+        self.visualizer.set_levels(levels)
 
     def set_status(self, ok: bool, text: str, detail: str = "") -> None:
         self.badge.set_status(ok, text, detail)

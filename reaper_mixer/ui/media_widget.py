@@ -46,7 +46,7 @@ class CoverView(QWidget):
         p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
         rect = QRectF(0, 0, self.width(), self.height())
         clip = QPainterPath()
-        clip.addRoundedRect(rect, 8, 8)
+        clip.addRoundedRect(rect, styles.rad(8), styles.rad(8))
         if self._pixmap is not None:
             if self._scaled is None:
                 self._scaled = self._pixmap.scaled(
@@ -58,11 +58,11 @@ class CoverView(QWidget):
             p.setClipping(False)
             p.setPen(QPen(styles.color(styles.WHITE, 0.08), 1))
             p.setBrush(Qt.BrushStyle.NoBrush)
-            p.drawRoundedRect(rect.adjusted(0.5, 0.5, -0.5, -0.5), 8, 8)
+            p.drawRoundedRect(rect.adjusted(0.5, 0.5, -0.5, -0.5), styles.rad(8), styles.rad(8))
             return
         p.setPen(QPen(QColor(styles.BORDER_COLUMN), 1))
         p.setBrush(QColor(styles.BG_DEEP))
-        p.drawRoundedRect(rect.adjusted(0.5, 0.5, -0.5, -0.5), 8, 8)
+        styles.draw_box(p, rect.adjusted(0.5, 0.5, -0.5, -0.5), 8, sunken=True)
         # Note de musique (deux croches)
         ink = styles.color(styles.TEXT_MUTED, 0.9)
         c = rect.center()

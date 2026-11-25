@@ -203,7 +203,7 @@ class IntelliPad(QWidget):
         background.setColorAt(1, QColor(styles.BG_SECTION))
         p.setPen(QPen(QColor(styles.BORDER_COLUMN), 1))
         p.setBrush(background)
-        p.drawRoundedRect(whole, 7, 7)
+        styles.draw_box(p, whole, 7, sunken=True)
 
         # En-tête : mode en cours (cliquable s'il y a plusieurs modes)
         header = self._header()

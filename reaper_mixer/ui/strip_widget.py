@@ -9,6 +9,10 @@ les relaie à Voicemeeter / REAPER, et lui renvoie l'état réel.
 
 Chaque élément peut avoir sa couleur, pour ce canal ou toute la console
 (styles.element_color, réglages → Couleurs) : apply_colors() l'applique.
+
+Disposition (réglages → Interface) : verticale (console, une colonne par
+canal) ou horizontale (rack : une ligne par canal, fader et VU couchés), à
+la densité choisie. set_layout() réarrange les mêmes widgets, sans les recréer.
 """
 
 from __future__ import annotations
@@ -16,12 +20,13 @@ from __future__ import annotations
 from PySide6.QtCore import QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QPainter, QPen
 from PySide6.QtWidgets import (QAbstractButton, QFrame, QGridLayout, QHBoxLayout, QLabel,
-                               QLineEdit, QMenu, QPushButton, QScrollArea, QStackedLayout, QVBoxLayout,
-                               QWidget)
+                               QLineEdit, QMenu, QPushButton, QScrollArea, QSizePolicy,
+                               QStackedLayout, QVBoxLayout, QWidget)
+from shiboken6 import delete as delete_now
 
 from core.reaper_ctrl import TrackInfo
 from core.voicemeeter_ctrl import StripParams
-from ui import styles
+from ui import interfaces, styles
 from ui.fader import Fader, format_db
 from ui.fx_pill import PILL_HEIGHT, FxPill, decode_fx
 from ui.intellipan import PAD_HEIGHT, IntelliPad
@@ -29,6 +34,7 @@ from ui.knob import Knob
 from ui.vu_meter import ClipLed, VuMeter
 
 STRIP_WIDTH = 133
+STRIP_WIDTHS = {"compacte": 124, "normale": STRIP_WIDTH, "aeree": 146}   # selon la densité
 FX_SECTION_HEIGHT = 186
 ROUTING_SECTION_HEIGHT = 102
 PAD_SECTION_HEIGHT = PAD_HEIGHT + 8
@@ -39,6 +45,29 @@ NAME_HEIGHT = 24
 SLOT_PITCH = PILL_HEIGHT + 2
 MIN_SLOTS = 8
 ROUTING_KNOB = 28
+WIDGET_MAX = 16777215                 # QWIDGETSIZE_MAX
+# Disposition horizontale (une ligne par canal)
+ROW_HEADER_WIDTH = 100                # nom, Muet, Apps
+ROW_FX_WIDTH = 180
+ROW_ROUTING_WIDTH = 96
+ROW_PAD_WIDTH = 128
+
+
+def unfix(widget: QWidget, width: int | None = None, height: int | None = None) -> None:
+    """Retire les tailles imposées d'un widget, puis fixe `width` / `height` s'ils sont donnés."""
+    widget.setMinimumSize(0, 0)
+    widget.setMaximumSize(WIDGET_MAX, WIDGET_MAX)
+    if width is not None:
+        widget.setFixedWidth(width)
+    if height is not None:
+        widget.setFixedHeight(height)
+
+
+def clear_layout(widget: QWidget) -> None:
+    """Supprime la disposition d'un widget (ses enfants restent en place)."""
+    layout = widget.layout()
+    if layout is not None:
+        delete_now(layout)
 
 
 def make_section() -> QFrame:
@@ -80,7 +109,8 @@ class FxBadge(QAbstractButton):
         custom = styles.element_color("fx_badge", self.color_scope)
         if on:
             accent = custom or styles.GREEN_NEON
-            p.setPen(QPen(styles.color(accent, 0.25), 3))
+            p.setPen(QPen(styles.color(accent, 0.25), 3) if styles.INTERFACE.glow
+                     else QPen(QColor(accent), 1))
             p.setBrush(QColor(accent))
             ink = QColor(styles.ink_on(custom) if custom else styles.ON_ACCENT)
         else:
@@ -89,7 +119,7 @@ class FxBadge(QAbstractButton):
             ink = QColor(styles.TEXT_MUTED)
         if self.underMouse():
             p.setBrush(p.brush().color().lighter(112))
-        p.drawRoundedRect(rect, 7, 7)
+        styles.draw_box(p, rect, 7, sunken=on)
 
         p.setPen(ink)
         p.setFont(styles.font(7, QFont.Weight.DemiBold))
@@ -143,7 +173,7 @@ class AppsButton(QAbstractButton):
         p.setPen(QPen(QColor(styles.accent_dim("apps", self.color_scope) if hover
                              else styles.BORDER_COLUMN), 1))
         p.setBrush(QColor(styles.BUTTON_HOVER if hover else styles.BUTTON_BG))
-        p.drawRoundedRect(rect, 7, 7)
+        styles.draw_box(p, rect, 7, sunken=self.isDown())
         # Icône : trois glissières horizontales
         ink = QColor(styles.TEXT_PRIMARY)
         p.setPen(QPen(ink, 1.4, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
@@ -349,7 +379,7 @@ class FxList(QWidget):
             if slot == self._hover_slot and self._enabled:
                 p.setPen(Qt.PenStyle.NoPen)
                 p.setBrush(styles.color(styles.GREEN_DIM, 0.35))
-                p.drawRoundedRect(rect.adjusted(0.5, 0.5, -0.5, -0.5), 5, 5)
+                p.drawRoundedRect(rect.adjusted(0.5, 0.5, -0.5, -0.5), styles.rad(5), styles.rad(5))
                 p.setPen(QColor(styles.GREEN_NEON))
                 p.setFont(styles.font(10, QFont.Weight.Medium))
                 p.drawText(rect, Qt.AlignmentFlag.AlignCenter, self._add_label)
@@ -458,17 +488,14 @@ class StripWidget(QFrame):
         self.index = index
         self._sends_adjustable = sends_adjustable   # False : Banana, knobs = interrupteurs
         self.setObjectName("column")
-        self.setFixedWidth(STRIP_WIDTH)
         self._track: TrackInfo | None = None
+        self._layout_key: tuple[str, str] | None = None
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(6, 6, 6, 4)
-        layout.setSpacing(8)
-        layout.addWidget(self._build_fx_section())
-        layout.addWidget(self._build_routing_section(route_labels))
-        layout.addWidget(self._build_pad_section(pad_modes, physical, pad_mode))
+        self.fx_section = self._build_fx_section()
+        self.routing_section = self._build_routing_section(route_labels)
+        self.pad_section = self._build_pad_section(pad_modes, physical, pad_mode)
 
-        self.mute = QPushButton("Muet")
+        self.mute = QPushButton("Muet", self)
         self.mute.setObjectName("muteButton")
         self.mute.setCheckable(True)
         self.mute.setFixedHeight(MUTE_HEIGHT)
@@ -476,22 +503,27 @@ class StripWidget(QFrame):
         self.mute.toggled.connect(self._on_mute)
         self.apps: AppsButton | None = None
         if apps_button:
-            row = QHBoxLayout()
-            row.setSpacing(4)
-            row.addWidget(self.mute, 1)
-            self.apps = AppsButton()
+            self.apps = AppsButton(self)
             self.apps.clicked.connect(lambda: self.appsRequested.emit(self.index))
-            row.addWidget(self.apps)
-            layout.addLayout(row)
-        else:
-            layout.addWidget(self.mute)
 
-        layout.addWidget(self._build_fader_section(), 1)
+        self.fader_section = make_section()
+        self.fader_section.setParent(self)
+        self.clip = ClipLed(self.fader_section)
+        self.value_label = QLabel(self.fader_section)
+        self.value_label.setObjectName("faderValue")
+        self.value_label.setTextFormat(Qt.TextFormat.RichText)
+        self.fader = Fader(self.fader_section)
+        self.fader.valueChanged.connect(self._on_fader)
+        self.vu = VuMeter(channels=2, bar_width=VU_BAR_WIDTH, gap=VU_GAP, parent=self.fader_section)
+        self._show_value(0.0)
 
-        self.name = EditableLabel(name)
+        self.name = EditableLabel(name, self)
         self.name.setFixedHeight(NAME_HEIGHT)
         self.name.edited.connect(lambda text: self.renamed.emit(self.index, text))
-        layout.addWidget(self.name)
+        self._row_header = QWidget(self)      # en ligne : nom, Muet et Apps à gauche
+        self._row_header.setFixedWidth(ROW_HEADER_WIDTH)
+        self._row_header.hide()
+        self.set_layout(styles.ORIENTATION, styles.DENSITY)
 
         # Couleurs personnalisées : chaque élément dessiné connaît son canal
         for widget in (self.fader, self.vu, self.fx_badge, self.fx_list, self.pad, self.apps):
@@ -517,16 +549,16 @@ class StripWidget(QFrame):
     # ------------------------------------------------------------ sections
     def _build_fx_section(self) -> QFrame:
         section = make_section()
-        section.setFixedHeight(FX_SECTION_HEIGHT)
+        section.setParent(self)
         box = QVBoxLayout(section)
         box.setContentsMargins(5, 5, 5, 5)
         box.setSpacing(4)
 
         header = QHBoxLayout()
         header.setContentsMargins(2, 0, 0, 0)
-        title = QLabel("Effets")
-        title.setObjectName("sectionTitle")
-        header.addWidget(title)
+        self.fx_title = QLabel("Effets")
+        self.fx_title.setObjectName("sectionTitle")
+        header.addWidget(self.fx_title)
         header.addStretch(1)
         self.latency_label = QLabel()
         self.latency_label.setObjectName("latencyLabel")
@@ -559,6 +591,7 @@ class StripWidget(QFrame):
 
     def _build_routing_section(self, labels: list[str]) -> QFrame:
         section = make_section()
+        section.setParent(self)
         section.setFixedHeight(ROUTING_SECTION_HEIGHT)
         grid = QGridLayout(section)
         grid.setContentsMargins(4, 6, 4, 4)
@@ -583,6 +616,7 @@ class StripWidget(QFrame):
     def _build_pad_section(self, modes: tuple[str, ...], physical: bool,
                            mode: str | None) -> QFrame:
         section = make_section()
+        section.setParent(self)
         section.setFixedHeight(PAD_SECTION_HEIGHT)
         box = QVBoxLayout(section)
         box.setContentsMargins(4, 4, 4, 4)
@@ -592,34 +626,123 @@ class StripWidget(QFrame):
         box.addWidget(self.pad)
         return section
 
-    def _build_fader_section(self) -> QFrame:
-        section = make_section()
-        box = QVBoxLayout(section)
+    # ------------------------------------------------------------ disposition
+    def orientation(self) -> str:
+        return self._layout_key[0] if self._layout_key else interfaces.DEFAULT_ORIENTATION
+
+    def set_layout(self, orientation: str, density: str) -> None:
+        """Dispose la strip à la verticale (console) ou à l'horizontale (rack), à la
+        densité voulue ; ne fait rien si c'est déjà le cas."""
+        orientation = interfaces.choice(orientation, interfaces.ORIENTATIONS,
+                                        interfaces.DEFAULT_ORIENTATION)
+        density = interfaces.choice(density, interfaces.DENSITIES, interfaces.DEFAULT_DENSITY)
+        self.fx_title.setVisible(styles.INTERFACE.titles)
+        if (orientation, density) == self._layout_key:
+            return
+        self._layout_key = (orientation, density)
+        factor = interfaces.density_factor(density)
+        clear_layout(self)
+        clear_layout(self.fader_section)
+        clear_layout(self._row_header)
+        if orientation == interfaces.HORIZONTAL:
+            self._arrange_row(factor)
+        else:
+            self._arrange_column(factor, STRIP_WIDTHS[density])
+        self.updateGeometry()
+
+    def _arrange_column(self, factor: float, width: int) -> None:
+        """Console : effets, routing, Intellipan, Muet, fader + VU, nom, de haut en bas."""
+        unfix(self, width=width)
+        self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Preferred)
+        unfix(self.fx_section, height=round(FX_SECTION_HEIGHT + (factor - 1) * 40))
+        unfix(self.routing_section, height=ROUTING_SECTION_HEIGHT)
+        unfix(self.pad_section, height=PAD_SECTION_HEIGHT)
+        unfix(self.mute, height=MUTE_HEIGHT)
+        unfix(self.fader_section)
+        unfix(self.name, height=NAME_HEIGHT)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(*(round(m * factor) for m in (6, 6, 6, 4)))
+        layout.setSpacing(round(8 * factor))
+        layout.addWidget(self.fx_section)
+        layout.addWidget(self.routing_section)
+        layout.addWidget(self.pad_section)
+        if self.apps is not None:
+            row = QHBoxLayout()
+            row.setSpacing(4)
+            row.addWidget(self.mute, 1)
+            row.addWidget(self.apps)
+            layout.addLayout(row)
+        else:
+            layout.addWidget(self.mute)
+        layout.addWidget(self.fader_section, 1)
+        layout.addWidget(self.name)
+        self._row_header.hide()
+
+        self.fader.setOrientation(Qt.Orientation.Vertical)
+        self.vu.setOrientation(Qt.Orientation.Vertical)
+        box = QVBoxLayout(self.fader_section)
         box.setContentsMargins(8, 6, 8, 8)
         box.setSpacing(4)
-
         header = QHBoxLayout()
-        self.clip = ClipLed()
         header.addWidget(self.clip, 0, Qt.AlignmentFlag.AlignVCenter)
         header.addStretch(1)
-        self.value_label = QLabel()
-        self.value_label.setObjectName("faderValue")
-        self.value_label.setTextFormat(Qt.TextFormat.RichText)
         header.addWidget(self.value_label)
         box.addLayout(header)
-
         body = QHBoxLayout()
         body.setSpacing(6)
         body.addStretch(1)
-        self.fader = Fader()
-        self.fader.valueChanged.connect(self._on_fader)
         body.addWidget(self.fader)
-        self.vu = VuMeter(channels=2, bar_width=VU_BAR_WIDTH, gap=VU_GAP)
         body.addWidget(self.vu)
         body.addStretch(1)
         box.addLayout(body, 1)
-        self._show_value(0.0)
-        return section
+
+    def _arrange_row(self, factor: float) -> None:
+        """Rack : une ligne — nom et Muet, effets, routing, Intellipan, puis fader et
+        VU couchés sur toute la largeur restante."""
+        margin = round(6 * factor)
+        unfix(self, height=ROUTING_SECTION_HEIGHT + 2 * margin)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        unfix(self.fx_section, width=ROW_FX_WIDTH)
+        unfix(self.routing_section, width=ROW_ROUTING_WIDTH, height=ROUTING_SECTION_HEIGHT)
+        unfix(self.pad_section, width=ROW_PAD_WIDTH, height=PAD_SECTION_HEIGHT)
+        unfix(self.mute, height=MUTE_HEIGHT)
+        unfix(self.fader_section)
+        self.fader_section.setMinimumWidth(220)
+        unfix(self.name, height=NAME_HEIGHT)
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(margin, margin, margin, margin)
+        layout.setSpacing(round(8 * factor))
+        header = QVBoxLayout(self._row_header)
+        header.setContentsMargins(0, 0, 0, 0)
+        header.setSpacing(round(6 * factor))
+        header.addWidget(self.name)
+        header.addWidget(self.mute)
+        if self.apps is not None:
+            header.addWidget(self.apps, 0, Qt.AlignmentFlag.AlignLeft)
+        header.addStretch(1)
+        layout.addWidget(self._row_header)
+        self._row_header.show()
+        layout.addWidget(self.fx_section)
+        layout.addWidget(self.routing_section)
+        layout.addWidget(self.pad_section, 0, Qt.AlignmentFlag.AlignVCenter)
+        layout.addWidget(self.fader_section, 1)
+
+        self.fader.setOrientation(Qt.Orientation.Horizontal)
+        self.vu.setOrientation(Qt.Orientation.Horizontal)
+        box = QHBoxLayout(self.fader_section)
+        box.setContentsMargins(8, 4, 8, 4)
+        box.setSpacing(6)
+        box.addWidget(self.clip, 0, Qt.AlignmentFlag.AlignVCenter)
+        body = QVBoxLayout()
+        body.setSpacing(2)
+        body.addStretch(1)
+        body.addWidget(self.fader)
+        body.addWidget(self.vu)
+        body.addStretch(1)
+        box.addLayout(body, 1)
+        box.addWidget(self.value_label, 0, Qt.AlignmentFlag.AlignVCenter)
 
     # ---------------------------------------------------- état venant des moteurs
     def set_params(self, params: StripParams) -> None:

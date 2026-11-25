@@ -4,6 +4,14 @@ effets, REAPER, FL Studio ou Equalizer APO. REKA se met ensuite à jour toute se
 
 ## Prochaine version
 
+- **Styles d'interface** : nouvel onglet ⚙ → Interface. Toute la console change de forme, pas
+  seulement de couleur : **Cantabile** (gris plats, angles nets, canaux en lignes façon rack),
+  **Lecteur 2000** (métal en relief, afficheurs LCD verts, boutons chromés, égaliseur animé dans
+  le Master), **Minimal** (aplats sans bordure, faders en simple barre) ou **REKA** d'origine.
+  Un aperçu réel de chaque style avant de l'appliquer.
+- **Disposition** : densité compacte, normale ou aérée ; strips verticales ou **horizontales**
+  (une ligne par canal, fader et VU couchés) ; animations activées, réduites ou désactivées.
+- **Mode mixte** : garde la forme d'un style avec ton thème et tes couleurs par-dessus.
 - **Égalisation du casque** : ⚙ → Écoute, tape le modèle de ton casque, et REKA corrige sa
   courbe avec le profil mesuré par AutoEQ (des milliers de casques et d'écouteurs). La courbe
   s'affiche ; un fichier `ParametricEQ.txt` ou une config Equalizer APO s'importent aussi.

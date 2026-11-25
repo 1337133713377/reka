@@ -3,6 +3,9 @@ Réglages de REKA, en onglets :
   - Général    : projet REAPER, édition de Voicemeeter (Potato / Banana),
                  chemins des moteurs, export / import de toute la config
   - Audio      : carte son de REAPER, affichage des moteurs, options
+  - Interface  : style de toute la console (REKA, Cantabile, Lecteur 2000,
+                 Minimal) avec aperçu, densité, orientation des strips,
+                 animations, couleurs du style ou les siennes (mode mixte)
   - Apparence  : thème de couleur, image d'arrière-plan, transparence des
                  panneaux, fenêtre
   - Couleurs   : couleur de chaque élément (knobs, Muet, VU…), pour toute
@@ -34,7 +37,7 @@ from core import backup, config, discord_rpc
 from core.process_manager import is_blank_project
 from core.effects import HOST_APO, HOST_FLSTUDIO, HOST_REAPER, HOSTS, host_kind
 from core.voicemeeter_ctrl import EDITIONS, edition, strip_map
-from ui import styles
+from ui import interface_preview, interfaces, styles
 from ui.listen_panel import ListenPanel
 from ui.project_dialog import default_project
 
@@ -43,6 +46,7 @@ log = logging.getLogger(__name__)
 IMAGE_FILTER = "Images (*.png *.jpg *.jpeg *.bmp *.webp *.gif)"
 BACKGROUND_STEM = "background"
 PRESET_COLUMNS = 3            # cartes de thèmes prédéfinis par ligne
+INTERFACE_COLUMNS = 2         # cartes de styles d'interface par ligne
 
 
 def project_label(path: str) -> str:
@@ -177,6 +181,79 @@ class PresetCard(QAbstractButton):
         super().leaveEvent(event)
 
 
+class InterfaceCard(QAbstractButton):
+    """Style d'interface : aperçu réel d'une mini-console dans ce style, son nom et
+    sa description. Cochée = style en cours."""
+
+    PREVIEW_HEIGHT = 190
+    HEIGHT = PREVIEW_HEIGHT + 74
+
+    def __init__(self, iface: interfaces.Interface, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.interface = iface
+        self._preview: QPixmap | None = None
+        self._scaled: QPixmap | None = None
+        self.setCheckable(True)
+        self.setFixedHeight(self.HEIGHT)
+        self.setMinimumWidth(240)
+        self.setToolTip(f"{iface.name} — {iface.description}")
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+    def set_preview(self, pixmap: QPixmap | None) -> None:
+        self._preview, self._scaled = pixmap, None
+        self.update()
+
+    def has_preview(self) -> bool:
+        return self._preview is not None and not self._preview.isNull()
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        self._scaled = None
+        super().resizeEvent(event)
+
+    def paintEvent(self, _event) -> None:  # noqa: N802
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        rect = QRectF(1, 1, self.width() - 2, self.height() - 2)
+        if self.isChecked():
+            p.setPen(QPen(QColor(styles.GREEN_NEON), 2))
+        else:
+            p.setPen(QPen(QColor(styles.TEXT_SECONDARY if self.underMouse()
+                                 else styles.BORDER_COLUMN), 1))
+        p.setBrush(QColor(styles.BG_SECTION))
+        p.drawRoundedRect(rect, styles.rad(10), styles.rad(10))
+        area = QRectF(8, 8, self.width() - 16, self.PREVIEW_HEIGHT)
+        if self.has_preview():
+            if self._scaled is None:
+                # En pixels de l'écran (écran à 150 %, 200 %…), pour un aperçu net à la bonne taille
+                ratio = self.devicePixelRatioF()
+                self._scaled = self._preview.scaled(
+                    (area.size() * ratio).toSize(), Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation)
+                self._scaled.setDevicePixelRatio(ratio)
+            size = self._scaled.deviceIndependentSize()
+            p.drawPixmap(QPointF(area.center().x() - size.width() / 2,
+                                 area.center().y() - size.height() / 2), self._scaled)
+        p.setPen(QColor(styles.TEXT_PRIMARY))
+        p.setFont(styles.font(12, QFont.Weight.DemiBold))
+        name = self.interface.name + ("  ✓" if self.isChecked() else "")
+        p.drawText(QRectF(12, area.bottom() + 8, self.width() - 24, 18),
+                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, name)
+        p.setPen(QColor(styles.TEXT_SECONDARY))
+        p.setFont(styles.font(10))
+        p.drawText(QRectF(12, area.bottom() + 28, self.width() - 24, 36),
+                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop | Qt.TextFlag.TextWordWrap,
+                   self.interface.description)
+
+    def enterEvent(self, event) -> None:  # noqa: N802
+        self.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event) -> None:  # noqa: N802
+        self.update()
+        super().leaveEvent(event)
+
+
 def _hint(text: str) -> QLabel:
     label = QLabel(text)
     label.setObjectName("hint")
@@ -206,7 +283,7 @@ class SettingsDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle(f"Réglages — {config.APP_NAME}")
         self.setMinimumWidth(600)
-        self.resize(700, 760)
+        self.resize(800, 760)
         self._cfg = cfg
         self._persist = persist
         self._processes = processes
@@ -254,6 +331,8 @@ class SettingsDialog(QDialog):
         self.listen_panel = ListenPanel(cfg, listen, parent=self)
         self.listen_panel.changed.connect(self.listenChanged)
         self.tabs.addTab(self._tab(self.listen_panel), "Écoute")
+        self.tabs.addTab(self._tab(self._interfaces_group(), self._layout_group(),
+                                   self._mix_group()), "Interface")
         self.tabs.addTab(self._tab(self._presets_group(), self._theme_group(), self._widgets_group(),
                                    self._background_group(), self._window_group()), "Apparence")
         self.tabs.addTab(self._tab(self._colors_group()), "Couleurs")
@@ -283,6 +362,8 @@ class SettingsDialog(QDialog):
         self._show_latency()
         self._show_background()
         self._show_preset()
+        self._show_interface()
+        self.tabs.currentChanged.connect(lambda _i: self._refresh_previews())
         if self._has_devices:
             vm.devices_changed.connect(self._show_devices)
             vm.request_devices()
@@ -671,6 +752,135 @@ class SettingsDialog(QDialog):
         self.manage_insert.setVisible(self._running_host in (HOST_REAPER, HOST_FLSTUDIO))
         return group
 
+    # ---------------------------------------------------------- Interface
+    def _interfaces_group(self) -> QGroupBox:
+        group = QGroupBox("Style d'interface")
+        box = QVBoxLayout(group)
+        box.addWidget(_hint("Toute la console change de forme : panneaux, knobs, faders, VU-mètres, "
+                            "police et fond. Choisir un style applique aussi sa disposition "
+                            "conseillée, modifiable ci-dessous."))
+        grid = QGridLayout()
+        grid.setSpacing(10)
+        self.interface_cards: dict[str, InterfaceCard] = {}
+        for n, iface in enumerate(interfaces.INTERFACES.values()):
+            card = InterfaceCard(iface)
+            card.clicked.connect(lambda _checked=False, key=iface.key: self.set_interface(key))
+            self.interface_cards[iface.key] = card
+            grid.addWidget(card, n // INTERFACE_COLUMNS, n % INTERFACE_COLUMNS)
+        box.addLayout(grid)
+        self.interface_label = _hint("")
+        box.addWidget(self.interface_label)
+        self._preview_key = None          # apparence des aperçus affichés (à refaire si elle change)
+        return group
+
+    def _layout_group(self) -> QGroupBox:
+        group = QGroupBox("Disposition")
+        form = QFormLayout(group)
+        ui_cfg = self._cfg.get("ui", {})
+        self.density_choice = self._style_combo(
+            {key: name for key, (name, _f) in interfaces.DENSITIES.items()},
+            interfaces.choice(ui_cfg.get("density"), interfaces.DENSITIES,
+                              interfaces.DEFAULT_DENSITY), "density")
+        form.addRow("Densité", self.density_choice)
+        self.orientation_choice = self._style_combo(
+            interfaces.ORIENTATIONS,
+            interfaces.choice(ui_cfg.get("orientation"), interfaces.ORIENTATIONS,
+                              interfaces.DEFAULT_ORIENTATION), "orientation")
+        form.addRow("Strips", self.orientation_choice)
+        self.animations_choice = self._style_combo(
+            interfaces.ANIMATIONS,
+            interfaces.choice(ui_cfg.get("animations"), interfaces.ANIMATIONS,
+                              interfaces.DEFAULT_ANIMATIONS), "animations")
+        form.addRow("Animations", self.animations_choice)
+        form.addRow(_hint("Compacte resserre les marges ; aérée laisse respirer. Horizontale range "
+                          "chaque canal sur une ligne, fader et VU couchés. Animations : pulsation "
+                          "du badge, fondu des messages, knob du casque, égaliseur du Lecteur 2000."))
+        return group
+
+    def _mix_group(self) -> QGroupBox:
+        group = QGroupBox("Couleurs")
+        box = QVBoxLayout(group)
+        self.keep_colors = QCheckBox("Garder mes couleurs par-dessus le style (thème de l'onglet "
+                                     "Apparence, couleurs de l'onglet Couleurs)")
+        self.keep_colors.setChecked(bool(self._cfg.get("ui", {}).get("keep_colors", False)))
+        self.keep_colors.toggled.connect(self._on_keep_colors)
+        box.addWidget(self.keep_colors)
+        self.keep_colors_hint = _hint("")
+        box.addWidget(self.keep_colors_hint)
+        return group
+
+    def set_interface(self, key: str) -> bool:
+        """Style d'interface choisi, avec sa disposition conseillée, appliqué tout de suite."""
+        ui_cfg = self._cfg.setdefault("ui", {})
+        if not interfaces.apply_interface(ui_cfg, key):
+            return False
+        for combo, value in ((self.density_choice, ui_cfg["density"]),
+                             (self.orientation_choice, ui_cfg["orientation"])):
+            combo.blockSignals(True)
+            combo.setCurrentIndex(max(0, combo.findData(value)))
+            combo.blockSignals(False)
+        self.appearanceChanged.emit()
+        self._show_interface()
+        return True
+
+    def _on_keep_colors(self, on: bool) -> None:
+        self._set_ui("keep_colors", on)
+        self._show_interface()
+
+    def _show_interface(self) -> None:
+        if not hasattr(self, "interface_cards"):
+            return
+        ui_cfg = self._cfg.get("ui", {})
+        current = interfaces.interface(ui_cfg.get("interface"))
+        for key, card in self.interface_cards.items():
+            card.setChecked(key == current.key)
+        orientation = interfaces.ORIENTATIONS[current.orientation].split(" (")[0].lower()
+        density = interfaces.DENSITIES[current.density][0].lower()
+        self.interface_label.setText(f"Style en cours : {current.name}. Disposition conseillée : "
+                                     f"strips {orientation}s, densité {density}.")
+        own_palette = bool(current.palette)
+        self.keep_colors.setEnabled(own_palette)
+        if not own_palette:
+            self.keep_colors_hint.setText("Le style REKA suit toujours le thème et tes couleurs.")
+        elif self.keep_colors.isChecked():
+            self.keep_colors_hint.setText(f"Mode mixte : la forme de « {current.name} », avec ton "
+                                          "thème et tes couleurs.")
+        else:
+            self.keep_colors_hint.setText(f"Couleurs d'origine de « {current.name} ». Coche la case "
+                                          "pour garder ton thème et tes couleurs.")
+        # Onglet Apparence : ce que le style remplace
+        own = current.own_shapes
+        for combo in (self.fader_choice, self.vu_choice):
+            combo.setEnabled(not own)
+            combo.setToolTip(f"Le style « {current.name} » dessine ses propres faders et VU-mètres "
+                             "(onglet Interface)." if own else "")
+        self.appearance_note.setVisible(own_palette and not self.keep_colors.isChecked())
+        self.appearance_note.setText(f"Le style d'interface « {current.name} » impose ses couleurs : "
+                                     "coche « Garder mes couleurs » dans l'onglet Interface pour "
+                                     "voir ton thème.")
+        self._refresh_previews()
+
+    def _refresh_previews(self) -> None:
+        """Aperçus des styles, refaits seulement si l'apparence qu'ils montrent a changé
+        (thème, couleurs, police, mode mixte) et quand l'onglet Interface est affiché."""
+        if not hasattr(self, "interface_cards"):
+            return
+        page = self.tabs.widget(self.tabs.currentIndex())
+        if page is None or not page.isAncestorOf(self.interface_cards["reka"]):
+            return
+        ui_cfg = self._cfg.get("ui", {})
+        key = repr([ui_cfg.get(k) for k in ("theme", "colors", "keep_colors", "font_family",
+                                            "fader_style", "vu_style")])
+        if key == self._preview_key:
+            return
+        self._preview_key = key
+        for iface_key, card in self.interface_cards.items():
+            try:
+                card.set_preview(interface_preview.render(ui_cfg, iface_key))
+            except Exception:                        # un aperçu raté ne bloque pas les réglages
+                log.exception("Aperçu du style %s impossible", iface_key)
+                card.set_preview(None)
+
     # ---------------------------------------------------------- Apparence
     def _presets_group(self) -> QGroupBox:
         group = QGroupBox("Thèmes prédéfinis")
@@ -745,6 +955,10 @@ class SettingsDialog(QDialog):
         box.addLayout(row)
         self.theme_label = _hint("")
         box.addWidget(self.theme_label)
+        self.appearance_note = _hint("")
+        self.appearance_note.setObjectName("warning")
+        self.appearance_note.hide()
+        box.addWidget(self.appearance_note)
         self.theme_group.buttonClicked.connect(lambda button: self.set_theme(button.theme))
         self._show_theme()
         return group
@@ -754,7 +968,7 @@ class SettingsDialog(QDialog):
         form = QFormLayout(group)
         self.font_choice = QFontComboBox()
         self.font_choice.setCurrentFont(styles.font(11))
-        self.font_choice.setCurrentText(styles.FONT_FAMILY)
+        self.font_choice.setCurrentText(styles.USER_FONT)
         self.font_choice.currentFontChanged.connect(
             lambda f: self._set_ui("font_family", f.family()))
         reset_font = QPushButton("Inter")
