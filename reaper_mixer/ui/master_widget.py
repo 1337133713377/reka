@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (QAbstractButton, QFrame, QHBoxLayout, QLabel, QSi
                                QVBoxLayout, QWidget)
 
 from core.engine_load import CPU_HIGH, CPU_WARN, GPU_HIGH, GPU_WARN, EngineLoad, level
-from ui import interfaces, styles
+from ui import decor, interfaces, styles
 from ui.fader import FADER_MIN_DB, format_db
 from ui.knob import Knob
 from ui.media_widget import MediaWidget
@@ -32,6 +32,10 @@ VISUALIZER_BANDS = 12
 VISUALIZER_HEIGHT = 52
 VISUALIZER_MS = {"on": 33, "reduced": 90}   # cadence de l'égaliseur selon les animations
 VISUALIZER_FALL = 0.045                     # retombée des barres par image
+BIG_HEADPHONE_KNOB = 86                     # style tactile
+NEEDLE_HEIGHT = 74
+VU_REFERENCE_DBFS = -18.0                   # 0 VU = -18 dBFS
+NEEDLE_SMOOTH = 0.3                         # inertie de l'aiguille à chaque relevé
 
 
 class GearButton(QAbstractButton):
@@ -45,7 +49,7 @@ class GearButton(QAbstractButton):
 
     def paintEvent(self, _event) -> None:  # noqa: N802
         p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        styles.smooth(p)
         hover = self.underMouse()
         p.setPen(Qt.PenStyle.NoPen)
         p.setBrush(QColor(styles.BUTTON_HOVER if hover else styles.BUTTON_BG))
@@ -95,7 +99,7 @@ class MinimizeButton(QAbstractButton):
 
     def paintEvent(self, _event) -> None:  # noqa: N802
         p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        styles.smooth(p)
         hover = self.underMouse()
         p.setPen(Qt.PenStyle.NoPen)
         p.setBrush(QColor(styles.BUTTON_HOVER if hover else styles.BUTTON_BG))
@@ -154,7 +158,7 @@ class ConnectionBadge(QWidget):
 
     def paintEvent(self, _event) -> None:  # noqa: N802
         p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        styles.smooth(p)
         rect = QRectF(0.5, 0.5, self.width() - 1, self.height() - 1)
         p.setPen(QPen(QColor(styles.BORDER_COLUMN), 1))
         p.setBrush(QColor(styles.BG_DEEP))
@@ -195,7 +199,7 @@ class ProjectButton(QAbstractButton):
 
     def paintEvent(self, _event) -> None:  # noqa: N802
         p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        styles.smooth(p)
         rect = QRectF(0.5, 0.5, self.width() - 1, self.height() - 1)
         hover = self.underMouse()
         p.setPen(QPen(QColor(styles.GREEN_DIM if hover else styles.BORDER_COLUMN), 1))
@@ -243,7 +247,7 @@ class UpdateButton(QAbstractButton):
 
     def paintEvent(self, _event) -> None:  # noqa: N802
         p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        styles.smooth(p)
         rect = QRectF(0.5, 0.5, self.width() - 1, self.height() - 1)
         accent = QColor(styles.GREEN_BRIGHT if self.underMouse() else styles.GREEN_NEON)
         p.setPen(Qt.PenStyle.NoPen)
@@ -302,7 +306,7 @@ class EngineButton(QAbstractButton):
 
     def paintEvent(self, _event) -> None:  # noqa: N802
         p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        styles.smooth(p)
         rect = QRectF(0.5, 0.5, self.width() - 1, self.height() - 1)
         hover = self.underMouse()
         accent = styles.accent("engines", styles.MASTER_SCOPE)
@@ -349,7 +353,7 @@ class ListenToggle(QAbstractButton):
 
     def paintEvent(self, _event) -> None:  # noqa: N802
         p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        styles.smooth(p)
         rect = QRectF(0.5, 0.5, self.width() - 1, self.height() - 1)
         hover = self.underMouse()
         accent = styles.accent("headphone", styles.MASTER_SCOPE)
@@ -415,7 +419,7 @@ class LoadMeter(QWidget):
 
     def paintEvent(self, _event) -> None:  # noqa: N802
         p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        styles.smooth(p)
         rect = QRectF(0.5, 0.5, self.width() - 1, self.height() - 1)
         p.setPen(QPen(QColor(styles.BORDER_COLUMN), 1))
         p.setBrush(QColor(styles.BG_DEEP))
@@ -521,6 +525,74 @@ class Visualizer(QWidget):
                 y -= 3
 
 
+class NeedleMeter(QWidget):
+    """VU-mètre à aiguille (consoles analogiques, hi-fi) : cadran rétro-éclairé,
+    zone rouge, aiguilles gauche et droite qui suivent le niveau avec inertie.
+    0 VU = -18 dBFS ; échelle de -20 à +3 VU."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._vu = [-20.0, -20.0]
+        self.setFixedHeight(NEEDLE_HEIGHT)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+
+    def values(self) -> list[float]:
+        return list(self._vu)
+
+    def set_levels(self, levels: tuple[float, ...]) -> None:
+        for n in range(2):
+            db = levels[n] if n < len(levels) else FADER_MIN_DB
+            target = max(-20.0, min(3.0, db - VU_REFERENCE_DBFS))
+            smooth = NEEDLE_SMOOTH if styles.animations("reduced") else 1.0
+            self._vu[n] += (target - self._vu[n]) * smooth
+        if self.isVisible():
+            self.update()
+
+    @staticmethod
+    def _ratio(vu: float) -> float:
+        """Position sur le cadran (0 → 1), en amplitude comme un vrai VU-mètre."""
+        low, high = 10 ** (-20 / 20), 10 ** (3 / 20)
+        return (10 ** (vu / 20) - low) / (high - low)
+
+    def paintEvent(self, _event) -> None:  # noqa: N802
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        rect = QRectF(0.5, 0.5, self.width() - 1, self.height() - 1)
+        face = QLinearGradient(0, 0, 0, rect.height())
+        face.setColorAt(0, QColor("#fff3cf"))
+        face.setColorAt(1, QColor("#e9c97a"))
+        p.setPen(QPen(styles.color(styles.BG_BLACK, 0.6), 1))
+        p.setBrush(face)
+        p.drawRoundedRect(rect, styles.rad(6), styles.rad(6))
+        styles.draw_bevel(p, rect, sunken=True)
+        pivot = QPointF(rect.center().x(), rect.bottom() + 6)
+        radius = min(rect.height() - 10, rect.width() / 2 / math.sin(math.radians(52)) - 4)
+        start, span = 142.0, -104.0          # degrés, de -20 à +3 VU
+        p.setFont(styles.font(7, QFont.Weight.DemiBold))
+        for vu in (-20, -10, -5, -3, 0, 3):
+            a = math.radians(start + span * self._ratio(vu))
+            d = QPointF(math.cos(a), -math.sin(a))
+            red = vu >= 0
+            p.setPen(QPen(QColor("#c0281e" if red else "#3a2a14"), 1.2))
+            p.drawLine(pivot + d * (radius - 7), pivot + d * (radius - 1))
+            label = pivot + d * (radius - 14)
+            p.drawText(QRectF(label.x() - 10, label.y() - 5, 20, 10), Qt.AlignmentFlag.AlignCenter,
+                       f"+{vu}" if vu > 0 else str(vu))
+        p.setPen(QPen(QColor("#c0281e"), 2.5, Qt.PenStyle.SolidLine, Qt.PenCapStyle.FlatCap))
+        arc = QRectF(pivot.x() - radius + 1, pivot.y() - radius + 1, 2 * radius - 2, 2 * radius - 2)
+        p.drawArc(arc, int((start + span * self._ratio(0)) * 16),
+                  int(span * (1 - self._ratio(0)) * 16))
+        p.setPen(QColor("#3a2a14"))
+        p.drawText(QRectF(rect.left(), rect.bottom() - 16, rect.width(), 12), Qt.AlignmentFlag.AlignCenter, "VU")
+        p.setClipRect(rect.adjusted(1, 1, -1, -1))
+        for value, ink in zip(self._vu, ("#1d1a16", "#c0281e")):
+            a = math.radians(start + span * self._ratio(value))
+            d = QPointF(math.cos(a), -math.sin(a))
+            p.setPen(QPen(QColor(ink), 1.3, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+            p.drawLine(pivot + d * 12, pivot + d * (radius - 3))
+
+
 class MasterWidget(QFrame):
     settingsRequested = Signal()
     projectRequested = Signal()
@@ -606,6 +678,9 @@ class MasterWidget(QFrame):
         self.visualizer = Visualizer()    # style « Lecteur 2000 »
         self.visualizer.hide()
         layout.addWidget(self.visualizer)
+        self.needle = NeedleMeter()       # consoles analogiques, hi-fi
+        self.needle.hide()
+        layout.addWidget(self.needle)
 
         vu_section = make_section()
         vu_box = QHBoxLayout(vu_section)
@@ -625,14 +700,24 @@ class MasterWidget(QFrame):
         """Éléments propres au style d'interface et aux animations."""
         self.visualizer.setVisible(styles.INTERFACE.visualizer and styles.animations("reduced"))
         self.visualizer.refresh_animation()
+        self.needle.setVisible(styles.INTERFACE.needle)
+        self.knob.setDiameter(BIG_HEADPHONE_KNOB if styles.INTERFACE.big else HEADPHONE_KNOB)
         self.badge.refresh_animation()
+        self.update()
 
     def set_density(self, density: str) -> None:
         factor = interfaces.density_factor(density)
         self.setFixedWidth(MASTER_WIDTHS.get(density, MASTER_WIDTH))
         layout = self.layout()
-        layout.setContentsMargins(*(round(m * factor) for m in (8, 10, 8, 8)))
+        extra = decor.decor_margins(horizontal=False)
+        layout.setContentsMargins(*(round(m * factor) + e for m, e in zip((8, 10, 8, 8), extra)))
         layout.setSpacing(round(10 * factor))
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        super().paintEvent(event)            # fond et bordure (feuille de style)
+        if styles.INTERFACE.decor:
+            p = QPainter(self)
+            decor.draw_decor(p, QRectF(self.rect()))
 
     def showEvent(self, event) -> None:  # noqa: N802
         super().showEvent(event)
@@ -657,6 +742,7 @@ class MasterWidget(QFrame):
     def set_levels(self, levels: tuple[float, float]) -> None:
         self.vu.set_levels(levels)
         self.visualizer.set_levels(levels)
+        self.needle.set_levels(levels)
 
     def set_status(self, ok: bool, text: str, detail: str = "") -> None:
         self.badge.set_status(ok, text, detail)

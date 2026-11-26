@@ -20,9 +20,8 @@ import sys
 import time
 from pathlib import Path
 
-from PySide6.QtCore import QByteArray, QEvent, QPointF, QProcess, QPropertyAnimation, Qt, QTimer
-from PySide6.QtGui import QAction, QColor, QPainter, QPixmap, QRadialGradient
-from PySide6.QtGui import QLinearGradient
+from PySide6.QtCore import QByteArray, QEvent, QProcess, QPropertyAnimation, Qt, QTimer
+from PySide6.QtGui import QAction, QColor, QPainter, QPixmap
 from PySide6.QtWidgets import (QApplication, QBoxLayout, QGraphicsOpacityEffect, QHBoxLayout,
                                QLabel, QMainWindow, QMenu, QMessageBox, QSystemTrayIcon, QWidget)
 from shiboken6 import delete as delete_now
@@ -38,7 +37,7 @@ from core.media import MediaBackend, NullMedia
 from core.process_manager import installed_voicemeeter_kinds, is_blank_project, reaper_project
 from core.updater import UpdateChecker, UpdateInfo
 from core.voicemeeter_ctrl import DEFAULT_ROUTING, MixerLevels, MixerParams
-from ui import interfaces, styles
+from ui import decor, interfaces, styles
 from ui.app_mixer import AppMixerPopup
 from ui.fx_pill import format_cost
 from ui.master_widget import MasterWidget
@@ -152,27 +151,7 @@ class Background(QWidget):
                          self._scaled)
             p.fillRect(self.rect(), styles.color(styles.BG_BLACK, self._darkness))
             return
-        if styles.INTERFACE.background == "flat":
-            return
-        if styles.INTERFACE.background == "brushed":
-            self._paint_brushed(p, w, h)
-            return
-        gradient = QRadialGradient(QPointF(w * 0.68, h * 0.42), max(w, h) * 0.62)
-        gradient.setColorAt(0.0, styles.color(styles.BG_GLOW, 0.95))
-        gradient.setColorAt(0.55, styles.color(styles.BG_GLOW, 0.35))
-        gradient.setColorAt(1.0, styles.color(styles.BG_GLOW, 0.0))
-        p.fillRect(self.rect(), gradient)
-
-    @staticmethod
-    def _paint_brushed(p: QPainter, w: int, h: int) -> None:
-        """« Lecteur 2000 » : métal brossé, plus clair en haut, fines stries."""
-        gradient = QLinearGradient(0, 0, 0, h)
-        gradient.setColorAt(0.0, QColor(styles.BG_GLOW))
-        gradient.setColorAt(0.5, QColor(styles.mix(styles.BG_GLOW, styles.BG_WINDOW, 0.6)))
-        gradient.setColorAt(1.0, QColor(styles.BG_WINDOW))
-        p.fillRect(0, 0, w, h, gradient)
-        for y in range(0, h, 3):
-            p.fillRect(0, y, w, 1, styles.color(styles.WHITE, 0.025 if (y // 3) % 2 else 0.0))
+        decor.paint_background(p, w, h)
 
 
 class Toast(QLabel):

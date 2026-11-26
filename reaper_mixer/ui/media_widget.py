@@ -42,7 +42,7 @@ class CoverView(QWidget):
 
     def paintEvent(self, _event) -> None:  # noqa: N802
         p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        styles.smooth(p)
         p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
         rect = QRectF(0, 0, self.width(), self.height())
         clip = QPainterPath()
@@ -127,7 +127,7 @@ class TransportButton(QAbstractButton):
 
     def paintEvent(self, _event) -> None:  # noqa: N802
         p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        styles.smooth(p)
         rect = QRectF(0.5, 0.5, self.width() - 1, self.height() - 1)
         hover = self.underMouse() and self.isEnabled()
         accent = _accent()

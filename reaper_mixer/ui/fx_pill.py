@@ -106,7 +106,7 @@ class FxPill(QWidget):
     # -------------------------------------------------------------- dessin
     def paintEvent(self, _event) -> None:  # noqa: N802
         p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        styles.smooth(p)
         rect = QRectF(0.5, 0.5, self.width() - 1, self.height() - 1)
 
         custom = styles.element_color("fx_pill", self.color_scope)

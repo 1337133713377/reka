@@ -67,7 +67,8 @@ PILL_BG = "#15201b"
 PILL_BORDER = "#24332c"
 KNOB_CAP_TOP = "#3a4642"      # dégradé du bouton des knobs
 KNOB_CAP_BOTTOM = "#1c2421"
-RED_DIM = "#3a1416"           # LED de saturation éteinte
+RED_DIM = "#3a1416"           # LED de saturation éteinte (rosée sur un thème clair)
+_RED_DIM_DARK = RED_DIM
 TEXT_ON_RED = "#2b0707"
 BG_DEEP = "#030b06"           # fonds très sombres (badge, bouton projet, Intellipan)
 ON_ACCENT = "#00341c"         # encre sur l'accent (badge FX allumé)
@@ -77,7 +78,7 @@ BADGE_OFF = "#0d1a14"         # badge FX éteint
 VU_BASE = GREEN_NEON          # couleur des niveaux normaux des VU-mètres
 LCD_BG = BG_DEEP              # afficheurs LCD (style « Lecteur 2000 »)
 LCD_TEXT = GREEN_NEON
-_DERIVED = ("VU_BASE", "LCD_BG", "LCD_TEXT")
+_DERIVED = ("VU_BASE", "LCD_BG", "LCD_TEXT", "RED_DIM")
 
 # --- Palette « Dark Studio Pro » (thème par défaut, façon DAW) --------------
 # Neutres gris-bleu et accent bleu studio, appliqués tels quels (sans rotation).
@@ -229,7 +230,24 @@ def uses_theme_colors(iface: Interface | None = None, keep: bool | None = None) 
     """La console suit le thème et les couleurs choisies (Apparence, Couleurs) :
     style sans palette propre, ou mode mixte."""
     iface = INTERFACE if iface is None else iface
-    return not iface.palette or (KEEP_COLORS if keep is None else keep)
+    return not iface.has_palette or (KEEP_COLORS if keep is None else keep)
+
+
+_interface_palettes: dict[str, dict[str, str]] = {}
+
+
+def interface_palette(iface: Interface) -> dict[str, str]:
+    """Couleurs propres d'un style d'interface : sa palette construite depuis ses
+    quatre couleurs de base, corrigée par ses couleurs données."""
+    if iface.key not in _interface_palettes:
+        values = build_palette(*iface.base) if iface.base else {}
+        _interface_palettes[iface.key] = {**values, **iface.palette}
+    return _interface_palettes[iface.key]
+
+
+def smooth(p: QPainter) -> None:
+    """Lissage du dessin : coupé pour un style pixelisé."""
+    p.setRenderHint(QPainter.RenderHint.Antialiasing, INTERFACE.antialias)
 
 
 # --- Formes selon le style d'interface ----------------------------------------
@@ -385,9 +403,11 @@ def load_fonts() -> bool:
 
 
 def theme_accent(theme: str | None) -> QColor | None:
-    """Couleur d'accent d'un thème (clé de THEMES ou « #rrggbb »), None si invalide."""
+    """Couleur d'accent d'un thème (clé de THEMES, de PALETTES ou « #rrggbb »), None si invalide."""
     if theme in THEMES:
         return QColor(THEMES[theme][1])
+    if theme in PALETTES:
+        return QColor(PALETTES[theme][1]["GREEN_NEON"])
     accent = QColor(str(theme or ""))
     return accent if str(theme or "").startswith("#") and accent.isValid() else None
 
@@ -425,7 +445,9 @@ def theme_palette(theme: str | None) -> tuple[str, dict[str, str]]:
     if accent is None:
         theme, accent = DEFAULT_THEME, QColor(THEMES[DEFAULT_THEME][1])
     values = dict(_BASE)
-    if theme == "studio":
+    if theme in PALETTES:                # palette complète, appliquée telle quelle
+        values.update(PALETTES[theme][1])
+    elif theme == "studio":
         values.update(STUDIO_PALETTE)
     elif theme != "neon":
         ah, as_, al, _ = accent.getHslF()
@@ -454,6 +476,7 @@ def _derive(values: dict[str, str]) -> dict[str, str]:
     values.setdefault("VU_BASE", values["GREEN_NEON"])
     values.setdefault("LCD_BG", values["BG_DEEP"])
     values.setdefault("LCD_TEXT", values["GREEN_NEON"])
+    values.setdefault("RED_DIM", _RED_DIM_DARK)
     return values
 
 
@@ -464,7 +487,8 @@ def look_palette(theme: str | None, iface: Interface | None = None,
     iface = INTERFACE if iface is None else iface
     theme, values = theme_palette(theme)
     if not uses_theme_colors(iface, keep_colors):
-        values = {**{k: v for k, v in values.items() if k not in _DERIVED}, **iface.palette}
+        values = {**{k: v for k, v in values.items() if k not in _DERIVED},
+                  **interface_palette(iface)}
     return theme, _derive(values)
 
 
@@ -478,6 +502,108 @@ def set_theme(theme: str | None) -> str:
     return theme
 
 
+def theme_name(theme: str | None) -> str:
+    """Nom affiché d'un thème de couleur."""
+    if theme in THEMES:
+        return THEMES[theme][0]
+    if theme in PALETTES:
+        return PALETTES[theme][0]
+    return f"couleur personnalisée {theme}"
+
+
+def is_light() -> bool:
+    """Thème clair en cours (fond des colonnes clair) : certains dessins s'adaptent."""
+    return luminance(QColor(BG_COLUMN)) > 0.4
+
+
+def build_palette(window: str, column: str, accent: str, text: str) -> dict[str, str]:
+    """Palette complète d'un thème à partir de quatre couleurs : fond de la fenêtre,
+    fond des colonnes, accent et texte. Marche pour les thèmes sombres et clairs."""
+    def m(a: str, b: str, amount: float) -> str:
+        return _mix(QColor(a), QColor(b), amount).name()
+
+    light = luminance(QColor(column)) > 0.4
+    black, white = "#000000", "#ffffff"
+    dark_ink = m(window, black, 0.6) if not light else m(text, black, 0.3)
+    ink = dark_ink if contrast(QColor(accent), QColor(dark_ink)) >= 4.5 else white
+    return {
+        "BG_WINDOW": window,
+        "BG_GLOW": m(window, accent, 0.07),
+        "BG_COLUMN": column,
+        "BG_SECTION": m(column, window, 0.55) if not light else m(column, text, 0.035),
+        "BORDER_COLUMN": m(column, text, 0.13 if not light else 0.16),
+        "BORDER_SECTION": m(column, text, 0.08 if not light else 0.1),
+        "BG_PANEL": column,
+        "BG_PILL": m(column, text, 0.06),
+        "BG_DEEP": m(window, black, 0.3) if not light else m(window, text, 0.07),
+        "GREEN_NEON": accent,
+        "GREEN_TEXT": accent,
+        "GREEN_BRIGHT": m(accent, white, HOVER_TOWARD_WHITE) if not light else m(accent, black, 0.15),
+        "GREEN_DIM": m(accent, column, 0.68 if not light else 0.45),
+        "GREEN_LABEL": m(text, column, 0.4),
+        "GREEN_SCALE": m(text, column, 0.7),
+        "TEXT_PRIMARY": text,
+        "TEXT_SECONDARY": m(text, column, 0.36),
+        "TEXT_MUTED": m(text, column, 0.6 if not light else 0.5),
+        "BUTTON_BG": m(column, text, 0.09),
+        "BUTTON_HOVER": m(column, text, 0.15),
+        "PILL_BG": m(column, text, 0.06),
+        "PILL_BORDER": m(column, text, 0.14),
+        # Boutons des knobs : sombres même sur un thème clair (l'index blanc reste lisible)
+        "KNOB_CAP_TOP": m(column, text, 0.22) if not light else m(text, column, 0.35),
+        "KNOB_CAP_BOTTOM": m(column, window, 0.4) if not light else m(text, black, 0.1),
+        "ON_ACCENT": ink,
+        "ON_ACCENT_DARK": ink,
+        "BADGE_OFF": m(column, text, 0.05),
+        **({"RED_DIM": m("#ef4444", column, 0.75)} if light else {}),
+    }
+
+
+# --- Thèmes à palette complète (fond, accent, texte) ---------------------------
+# clé (config ui.theme) → (nom affiché, palette). Choisis par les thèmes prédéfinis.
+PALETTES: dict[str, tuple[str, dict[str, str]]] = {key: (name, build_palette(*colors)) for key, name, colors in (
+    # Sobres
+    ("graphite", "Graphite", ("#121314", "#1b1c1e", "#a3b1c2", "#e6e8ea")),
+    ("minuit", "Minuit", ("#070b14", "#0e1424", "#6d8cff", "#dfe6ff")),
+    ("carbone", "Carbone", ("#0a0a0a", "#151515", "#ff7a1a", "#f2f2f2")),
+    # Néon & rétro
+    ("cyberpunk", "Cyberpunk", ("#0b0614", "#150b24", "#fcee0a", "#f2f0ff")),
+    ("outrun", "Outrun", ("#12051f", "#1d0a31", "#ff2975", "#ffe9f5")),
+    ("vaporwave", "Vaporwave", ("#170f2b", "#231741", "#ff71ce", "#fdf2ff")),
+    ("toxique", "Toxique", ("#0a0d05", "#13180a", "#a6ff00", "#effbe0")),
+    # Chauds
+    ("volcan", "Volcan", ("#120604", "#1f0c08", "#ff4d1a", "#ffe8df")),
+    ("crepuscule", "Crépuscule", ("#160b10", "#25131b", "#ff8a5c", "#ffeae0")),
+    ("ambre", "Ambre", ("#0f0b03", "#1a1307", "#ffb000", "#fff3d6")),
+    ("cafe", "Café", ("#120d0a", "#1e1612", "#d4a373", "#f3e9e0")),
+    # Froids
+    ("aurore", "Aurore boréale", ("#050d12", "#0b1820", "#3ef0b4", "#e0fbf3")),
+    ("abysse", "Abysse", ("#020a12", "#07141f", "#00b4d8", "#d8f3ff")),
+    ("arctique", "Arctique", ("#0c1216", "#151e25", "#9ad7ff", "#f0f8ff")),
+    # Nature
+    ("foret", "Forêt", ("#08100b", "#101d15", "#5fbf77", "#e3f1e6")),
+    ("lavande", "Lavande", ("#110e18", "#1c1727", "#b79cff", "#efe9ff")),
+    ("desert", "Désert", ("#15100a", "#231a11", "#e9a65a", "#f6ead8")),
+    ("menthe", "Menthe", ("#071311", "#0e201c", "#4fe3c1", "#e2fbf5")),
+    # Pastel
+    ("bonbon", "Bonbon", ("#1a1220", "#271b30", "#ff9ad5", "#fff0f9")),
+    ("peche", "Pêche", ("#1a1312", "#291e1c", "#ffb38a", "#fff1ea")),
+    # Éditeurs de code
+    ("nord", "Nord", ("#242933", "#2e3440", "#88c0d0", "#eceff4")),
+    ("dracula", "Dracula", ("#1e1f29", "#282a36", "#bd93f9", "#f8f8f2")),
+    ("gruvbox", "Gruvbox", ("#1d2021", "#282828", "#fabd2f", "#ebdbb2")),
+    ("solarized", "Solarized", ("#00212b", "#002b36", "#2aa1f2", "#eee8d5")),
+    ("tokyonight", "Tokyo Night", ("#16161e", "#1a1b26", "#7aa2f7", "#c0caf5")),
+    ("catppuccin", "Catppuccin", ("#11111b", "#1e1e2e", "#cba6f7", "#cdd6f4")),
+    ("monokai", "Monokai", ("#1e1f1c", "#272822", "#a6e22e", "#f8f8f2")),
+    ("onedark", "One Dark", ("#1e2127", "#282c34", "#61afef", "#dcdfe4")),
+    # Clairs
+    ("papier", "Papier", ("#e9e5dc", "#f8f6f1", "#c2410c", "#2b2a27")),
+    ("neige", "Neige", ("#e3e9f0", "#f7f9fc", "#2563eb", "#1e293b")),
+    ("aube", "Aube", ("#ece6f1", "#fbf8fd", "#9333ea", "#2a2233")),
+)}
+
+
 # --- Thèmes prédéfinis --------------------------------------------------------
 # Un thème prédéfini règle d'un coup la couleur d'accent (ui.theme), les couleurs
 # par élément (ui.colors) et le style des faders et des VU-mètres. L'arrière-plan,
@@ -487,10 +613,11 @@ class Preset:
     key: str
     name: str
     description: str
-    theme: str                                   # clé de THEMES ou « #rrggbb »
+    theme: str                                   # clé de THEMES, de PALETTES ou « #rrggbb »
     colors: dict[str, str] = field(default_factory=dict)
     fader_style: str = DEFAULT_FADER_STYLE
     vu_style: str = DEFAULT_VU_STYLE
+    category: str = "Sobres"
 
     def swatches(self) -> list[str]:
         """Couleurs qui résument le thème (aperçu) : l'accent puis ses couleurs propres."""
@@ -502,43 +629,173 @@ class Preset:
 
 
 _CHANNEL_COLORS = ("#22c55e", "#f59e0b", "#5865f2", "#06b6d4", "#ec4899", "#a855f7")
+# Catégories des thèmes prédéfinis, dans l'ordre d'affichage des réglages
+PRESET_CATEGORIES = ("Sobres", "Néon & rétro", "Chauds", "Froids", "Nature", "Pastel",
+                     "Éditeurs de code", "Clairs")
+
+
+def _sends(*values: str) -> dict[str, str]:
+    """Couleurs des quatre knobs d'envoi (Monitor, Mic Out, Discord, Obs)."""
+    return {f"send{n}": value for n, value in enumerate(values)}
+
+
 PRESETS: dict[str, Preset] = {preset.key: preset for preset in (
+    # --- Sobres
     Preset("studio", "Dark Studio Pro", "Sobre, gris-bleu, façon station audio.", "studio"),
-    Preset("neon", "Néon", "Le vert néon d'origine de REKA.", "neon"),
+    Preset("mono", "Monochrome", "Blanc et gris, sans couleur.", "blanc", {}, "fin", "continu"),
+    Preset("graphite", "Graphite", "Gris anthracite et bleu acier, très discret.", "graphite",
+           {"vu": "#8fd1a8"}, "fin", "continu"),
+    Preset("minuit", "Minuit", "Bleu nuit profond, accent pervenche.", "minuit",
+           {"vu": "#7dd3fc", "headphone": "#a5b4fc"}, "console", "segments"),
+    Preset("carbone", "Carbone", "Noir carbone, accent orange course.", "carbone",
+           {"vu": "#f2f2f2", "pad": "#ff7a1a"}, "console", "led"),
+    # --- Néon & rétro
+    Preset("neon", "Néon", "Le vert néon d'origine de REKA.", "neon", category="Néon & rétro"),
     Preset("synthwave", "Synthwave", "Violet, rose et cyan, années 80.", "#b266ff",
            {"send0": "#ff4fb8", "send1": "#00e5ff", "send2": "#b266ff", "send3": "#ffd23f",
             "fader": "#ff4fb8", "vu": "#00e5ff", "fx_badge": "#ff4fb8",
             "headphone": "#00e5ff", "engines": "#ff4fb8", "media": "#00e5ff"},
-           "rond", "continu"),
-    Preset("braise", "Braise", "Orange et rouge, chaleureux.", "orange",
-           {"fader": "#ff6a3d", "vu": "#ffb347", "fx_badge": "#ff6a3d", "headphone": "#ff6a3d",
-            "pad": "#ffd23f"},
-           "vintage", "led"),
-    Preset("glace", "Glace", "Cyan et blanc givré.", "cyan",
-           {"fader": "#e9f7ff", "name": "#e9f7ff", "headphone": "#e9f7ff", "vu": "#7dd3fc"},
-           "fin", "segments"),
+           "rond", "continu", category="Néon & rétro"),
     Preset("matrix", "Matrix", "Noir et vert terminal.", "#39ff14",
            {"name": "#7dff6a", "pad": "#39ff14"},
-           "fin", "led"),
-    Preset("ornoir", "Or noir", "Doré sur fond sombre.", "or",
-           {"name": "#ffe9a8", "fx_pill": "#ffd23f"},
-           "vintage", "continu"),
-    Preset("sakura", "Sakura", "Rose pastel et blanc.", "#ff8fc7",
-           {"fader": "#ffffff", "vu": "#ffb3d9", "name": "#ffe3f1", "headphone": "#ffffff"},
-           "rond", "segments"),
-    Preset("ocean", "Océan", "Bleus et turquoise.", "bleu",
-           {"send0": "#22d3ee", "send1": "#3d8bff", "send2": "#818cf8", "send3": "#2dd4bf",
-            "fader": "#3d8bff", "vu": "#22d3ee"},
-           "console", "continu"),
-    Preset("rubis", "Rubis", "Rouge profond ; le Muet passe à l'ambre pour rester visible.", "rouge",
-           {"mute": "#ffb020", "pad": "#ffffff"},
-           "console", "segments"),
+           "fin", "led", category="Néon & rétro"),
     Preset("arcade", "Arcade", "Une couleur par canal, pour s'y retrouver d'un coup d'œil.", "studio",
            {f"{element}@{index}": value for index, value in enumerate(_CHANNEL_COLORS)
             for element in ("fader", "name", "fx_badge", "apps")},
-           "console", "led"),
-    Preset("mono", "Monochrome", "Blanc et gris, sans couleur.", "blanc", {}, "fin", "continu"),
+           "console", "led", category="Néon & rétro"),
+    Preset("cyberpunk", "Cyberpunk", "Jaune électrique, cyan et magenta sur nuit violette.",
+           "cyberpunk",
+           {**_sends("#00f0ff", "#ff2a6d", "#fcee0a", "#05ffa1"), "vu": "#00f0ff",
+            "fx_badge": "#ff2a6d", "headphone": "#00f0ff", "pad": "#fcee0a"},
+           "fin", "led", category="Néon & rétro"),
+    Preset("outrun", "Outrun", "Coucher de soleil rétro : rose, orange et violet.", "outrun",
+           {**_sends("#ff2975", "#f7b32b", "#b967ff", "#00e5ff"), "vu": "#f7b32b",
+            "headphone": "#f7b32b", "media": "#ff2975"},
+           "rond", "continu", category="Néon & rétro"),
+    Preset("vaporwave", "Vaporwave", "Rose bonbon, cyan et menthe, façon années 90.", "vaporwave",
+           {**_sends("#01cdfe", "#05ffa1", "#b967ff", "#fffb96"), "vu": "#01cdfe",
+            "fader": "#ff71ce", "headphone": "#01cdfe"},
+           "rond", "segments", category="Néon & rétro"),
+    Preset("toxique", "Toxique", "Vert acide sur noir, impossible à rater.", "toxique",
+           {"vu": "#a6ff00", "pad": "#d4ff4f", "name": "#d4ff4f"},
+           "fin", "led", category="Néon & rétro"),
+    # --- Chauds
+    Preset("braise", "Braise", "Orange et rouge, chaleureux.", "orange",
+           {"fader": "#ff6a3d", "vu": "#ffb347", "fx_badge": "#ff6a3d", "headphone": "#ff6a3d",
+            "pad": "#ffd23f"},
+           "vintage", "led", category="Chauds"),
+    Preset("ornoir", "Or noir", "Doré sur fond sombre.", "or",
+           {"name": "#ffe9a8", "fx_pill": "#ffd23f"},
+           "vintage", "continu", category="Chauds"),
+    Preset("rubis", "Rubis", "Rouge profond ; le Muet passe à l'ambre pour rester visible.", "rouge",
+           {"mute": "#ffb020", "pad": "#ffffff"},
+           "console", "segments", category="Chauds"),
+    Preset("volcan", "Volcan", "Lave et cendre : rouge-orangé sur brun brûlé.", "volcan",
+           {"vu": "#ffb020", "pad": "#ffd23f", "headphone": "#ff7a3d"},
+           "vintage", "led", category="Chauds"),
+    Preset("crepuscule", "Crépuscule", "Dégradé de fin de journée : or, corail, rose, mauve.",
+           "crepuscule",
+           {**_sends("#ffcf5c", "#ff8a5c", "#ff5c8a", "#c45cff"), "vu": "#ffcf5c",
+            "headphone": "#ffcf5c"},
+           "rond", "continu", category="Chauds"),
+    Preset("ambre", "Ambre", "Ambre de vieux terminal, une seule couleur.", "ambre",
+           {"name": "#ffcc4d", "vu": "#ffb000"},
+           "fin", "led", category="Chauds"),
+    Preset("cafe", "Café", "Brun torréfié et crème, tout en douceur.", "cafe",
+           {"vu": "#e9c89b", "fader": "#e9c89b", "pad": "#d4a373"},
+           "vintage", "continu", category="Chauds"),
+    # --- Froids
+    Preset("glace", "Glace", "Cyan et blanc givré.", "cyan",
+           {"fader": "#e9f7ff", "name": "#e9f7ff", "headphone": "#e9f7ff", "vu": "#7dd3fc"},
+           "fin", "segments", category="Froids"),
+    Preset("ocean", "Océan", "Bleus et turquoise.", "bleu",
+           {"send0": "#22d3ee", "send1": "#3d8bff", "send2": "#818cf8", "send3": "#2dd4bf",
+            "fader": "#3d8bff", "vu": "#22d3ee"},
+           "console", "continu", category="Froids"),
+    Preset("aurore", "Aurore boréale", "Vert, bleu et violet qui ondulent sur la nuit polaire.",
+           "aurore",
+           {**_sends("#3ef0b4", "#4fc3ff", "#b07cff", "#6af58f"), "vu": "#4fc3ff",
+            "headphone": "#b07cff"},
+           "rond", "continu", category="Froids"),
+    Preset("abysse", "Abysse", "Bleu des grands fonds, éclats de turquoise.", "abysse",
+           {"vu": "#48cae4", "fader": "#90e0ef", "headphone": "#48cae4"},
+           "fin", "segments", category="Froids"),
+    Preset("arctique", "Arctique", "Bleu glacier très pâle et blanc pur.", "arctique",
+           {"fader": "#ffffff", "vu": "#c6ecff", "name": "#ffffff"},
+           "fin", "continu", category="Froids"),
+    # --- Nature
+    Preset("foret", "Forêt", "Vert sapin, mousse et bois clair.", "foret",
+           {"vu": "#9bd36a", "pad": "#e0b04a", "headphone": "#9bd36a"},
+           "vintage", "segments", category="Nature"),
+    Preset("lavande", "Lavande", "Champ de lavande au soir : mauves doux.", "lavande",
+           {"vu": "#d7c6ff", "fader": "#d7c6ff", "pad": "#ffb3d9"},
+           "rond", "continu", category="Nature"),
+    Preset("desert", "Désert", "Sable, ocre et terre cuite.", "desert",
+           {**_sends("#e9c46a", "#e9a65a", "#e76f51", "#2a9d8f"), "vu": "#e9c46a",
+            "pad": "#e76f51"},
+           "vintage", "led", category="Nature"),
+    Preset("menthe", "Menthe", "Menthe fraîche et eau claire.", "menthe",
+           {"vu": "#7ff5d8", "fader": "#b5fff0"},
+           "rond", "segments", category="Nature"),
+    # --- Pastel
+    Preset("sakura", "Sakura", "Rose pastel et blanc.", "#ff8fc7",
+           {"fader": "#ffffff", "vu": "#ffb3d9", "name": "#ffe3f1", "headphone": "#ffffff"},
+           "rond", "segments", category="Pastel"),
+    Preset("bonbon", "Bonbon", "Rose, bleu ciel, citron et pistache.", "bonbon",
+           {**_sends("#9ad5ff", "#ffe29a", "#b4ff9a", "#ff9ad5"), "vu": "#9ad5ff",
+            "headphone": "#ffe29a"},
+           "rond", "continu", category="Pastel"),
+    Preset("peche", "Pêche", "Pêche, abricot et crème.", "peche",
+           {"vu": "#ffd6a5", "fader": "#ffd6a5", "pad": "#ff8fab"},
+           "rond", "segments", category="Pastel"),
+    # --- Éditeurs de code
+    Preset("nord", "Nord", "Bleus arctiques de la palette Nord.", "nord",
+           {**_sends("#88c0d0", "#81a1c1", "#b48ead", "#a3be8c"), "vu": "#a3be8c",
+            "pad": "#d08770"},
+           "fin", "continu", category="Éditeurs de code"),
+    Preset("dracula", "Dracula", "Violet, rose, vert et cyan sur gris sombre.", "dracula",
+           {**_sends("#ff79c6", "#8be9fd", "#50fa7b", "#f1fa8c"), "vu": "#50fa7b",
+            "fx_badge": "#ff79c6", "headphone": "#ff79c6"},
+           "rond", "continu", category="Éditeurs de code"),
+    Preset("gruvbox", "Gruvbox", "Jaune, orange et vert délavés, ambiance rétro.", "gruvbox",
+           {**_sends("#fe8019", "#b8bb26", "#83a598", "#d3869b"), "vu": "#b8bb26",
+            "fader": "#fe8019"},
+           "vintage", "led", category="Éditeurs de code"),
+    Preset("solarized", "Solarized", "Bleu pétrole, jaune et cyan de Solarized.", "solarized",
+           {**_sends("#b58900", "#2aa198", "#6c71c4", "#859900"), "vu": "#859900",
+            "pad": "#cb4b16"},
+           "console", "segments", category="Éditeurs de code"),
+    Preset("tokyonight", "Tokyo Night", "Nuit tokyoïte : bleus, violet et vert néon doux.",
+           "tokyonight",
+           {**_sends("#bb9af7", "#7dcfff", "#9ece6a", "#ff9e64"), "vu": "#9ece6a",
+            "headphone": "#bb9af7"},
+           "rond", "continu", category="Éditeurs de code"),
+    Preset("catppuccin", "Catppuccin", "Pastels mauve, rose et vert sur fond moka.", "catppuccin",
+           {**_sends("#f5c2e7", "#89dceb", "#a6e3a1", "#fab387"), "vu": "#a6e3a1",
+            "headphone": "#f5c2e7"},
+           "rond", "continu", category="Éditeurs de code"),
+    Preset("monokai", "Monokai", "Vert pomme, rose et orange sur fond olive.", "monokai",
+           {**_sends("#f92672", "#66d9ef", "#fd971f", "#ae81ff"), "vu": "#a6e22e",
+            "fx_badge": "#f92672"},
+           "console", "led", category="Éditeurs de code"),
+    Preset("onedark", "One Dark", "Bleu, violet et vert sur gris bleuté.", "onedark",
+           {**_sends("#c678dd", "#98c379", "#e5c07b", "#56b6c2"), "vu": "#98c379"},
+           "console", "segments", category="Éditeurs de code"),
+    # --- Clairs
+    Preset("papier", "Papier", "Clair : papier crème et encre, accent orange brûlé.", "papier",
+           {"vu": "#15803d"}, "console", "continu", category="Clairs"),
+    Preset("neige", "Neige", "Clair : blanc bleuté, accent bleu franc.", "neige",
+           {"vu": "#16a34a"}, "fin", "continu", category="Clairs"),
+    Preset("aube", "Aube", "Clair : blanc rosé et violet, comme un matin.", "aube",
+           {"vu": "#0d9488", "pad": "#db2777"}, "rond", "continu", category="Clairs"),
 )}
+
+
+def presets_by_category() -> list[tuple[str, list[Preset]]]:
+    """Thèmes prédéfinis rangés par catégorie, dans l'ordre d'affichage."""
+    groups = [(category, [preset for preset in PRESETS.values() if preset.category == category])
+              for category in PRESET_CATEGORIES]
+    return [(category, presets) for category, presets in groups if presets]
 
 
 def apply_preset(ui_cfg: dict, key: str) -> bool:
@@ -609,8 +866,8 @@ def build_stylesheet(panel_opacity: float = 1.0) -> str:
     global _panel_opacity
     _panel_opacity = panel_opacity
     return (_stylesheet()
-            .replace("@COLUMN_BG@", _rgba(BG_COLUMN, panel_opacity))
-            .replace("@SECTION_BG@", _rgba(BG_SECTION, panel_opacity)))
+            .replace("@COLUMN_BG@", _rgba(BG_COLUMN, panel_opacity * INTERFACE.panel_alpha))
+            .replace("@SECTION_BG@", _rgba(BG_SECTION, panel_opacity * INTERFACE.panel_alpha)))
 
 
 def refresh(app: QApplication, panel_opacity: float = 1.0) -> None:
@@ -1099,11 +1356,15 @@ QProgressBar::chunk {{
 
 def _interface_stylesheet() -> str:
     """Ajouts du style d'interface en cours (après la QSS de base : ils l'emportent)."""
-    if INTERFACE.borders == "bevel":
-        return _bevel_stylesheet()
-    if INTERFACE.borders == "none":
-        return _flat_stylesheet()
-    return ""
+    parts = {"bevel": _bevel_stylesheet, "none": _flat_stylesheet,
+             "dashed": lambda: _line_stylesheet("dashed", 1),
+             "thick": lambda: _line_stylesheet("solid", 3)}
+    sheet = parts[INTERFACE.borders]() if INTERFACE.borders in parts else ""
+    if INTERFACE.lcd:
+        sheet += _lcd_stylesheet()
+    if INTERFACE.big:
+        sheet += _big_stylesheet()
+    return sheet
 
 
 def _bevel_edges(base: str, sunken: bool = False, width: int = 2) -> str:
@@ -1154,8 +1415,28 @@ QPushButton#soloButton:checked {{
 QPushButton#primary {{
     background: {_chrome(GREEN_DIM)};
     {_bevel_edges(GREEN_DIM)}
-    color: {LCD_TEXT};
+    color: {LCD_TEXT if INTERFACE.lcd else TEXT_PRIMARY};
 }}
+QLabel#sectionTitle, QLabel#knobLabel, QLabel#masterLabel {{
+    font-weight: 700;
+}}
+QLabel#masterTitle {{
+    font-size: 15px;
+    font-weight: 700;
+}}
+QTabBar::tab:selected {{
+    background: {_chrome(BUTTON_BG)};
+    {_bevel_edges(BUTTON_BG)}
+}}
+QGroupBox {{
+    {_bevel_edges(BG_COLUMN)}
+}}
+"""
+
+
+def _lcd_stylesheet() -> str:
+    """Afficheurs LCD : noms des canaux et valeurs en caractères d'écran."""
+    return f"""
 QLabel#stripName, QLabel#faderValue, QLabel#masterValue {{
     background: {LCD_BG};
     color: {LCD_TEXT};
@@ -1170,20 +1451,54 @@ QLabel#stripName {{
     font-size: 12px;
     font-weight: 700;
 }}
-QLabel#sectionTitle, QLabel#knobLabel, QLabel#masterLabel {{
-    font-weight: 700;
+"""
+
+
+def _line_stylesheet(style: str, width: int) -> str:
+    """Cadres tracés (pointillés du terminal, gros traits pixel ou brutalistes)."""
+    edge = f"{width}px {style} {BORDER_COLUMN}"
+    inner = f"{max(1, width - 1)}px {style} {BORDER_SECTION}"
+    return f"""
+QFrame#column {{
+    border: {edge};
 }}
-QLabel#masterTitle {{
-    font-size: 16px;
-    font-weight: 700;
+QFrame#section {{
+    border: {inner};
 }}
-QTabBar::tab:selected {{
-    background: {_chrome(BUTTON_BG)};
-    {_bevel_edges(BUTTON_BG)}
+QPushButton, QPushButton#muteButton, QPushButton#soloButton {{
+    border: {edge};
+}}
+QPushButton:hover, QPushButton#muteButton:hover, QPushButton#soloButton:hover {{
+    border: {width}px {style} {GREEN_NEON};
+}}
+QPushButton#muteButton:checked {{
+    border: {width}px {style} {BORDER_COLUMN};
 }}
 QGroupBox {{
-    {_bevel_edges(BG_COLUMN)}
+    border: {edge};
 }}
+QLabel#stripName {{
+    font-weight: 800;
+}}
+QLabel#masterTitle {{
+    font-size: 15px;
+    font-weight: 800;
+}}
+"""
+
+
+def _big_stylesheet() -> str:
+    """Tactile : textes des boutons plus grands."""
+    return """
+QPushButton#muteButton, QPushButton#soloButton {
+    font-size: 14px;
+}
+QLabel#stripName {
+    font-size: 14px;
+}
+QLabel#knobLabel {
+    font-size: 11px;
+}
 """
 
 

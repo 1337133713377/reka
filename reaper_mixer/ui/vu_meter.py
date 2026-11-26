@@ -11,7 +11,7 @@ from __future__ import annotations
 import time
 
 from PySide6.QtCore import QRectF, Qt
-from PySide6.QtGui import QColor, QLinearGradient, QPainter
+from PySide6.QtGui import QColor, QLinearGradient, QPainter, QPen
 from PySide6.QtWidgets import QSizePolicy, QWidget
 
 from ui import styles
@@ -98,7 +98,7 @@ class VuMeter(QWidget):
 
     def paintEvent(self, _event) -> None:  # noqa: N802
         p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        styles.smooth(p)
         length = float(self.height())
         if self._orientation == Qt.Orientation.Horizontal:
             # Dessin vertical dans un repère tourné : +12 dB à droite
@@ -121,7 +121,8 @@ class VuMeter(QWidget):
 
         offset = 3 if self._clip_leds else 0
         now = time.monotonic()
-        off_opacity = {"flat": 0.0, "line": 0.0, "lcd": 0.22}.get(shape, 0.16)
+        off_opacity = {"flat": 0.0, "line": 0.0, "lcd": 0.22, "outline": 0.0,
+                       "pixel": 0.25}.get(shape, 0.16)
         for i in range(self._channels):
             x = offset + i * (self._bar_w + self._gap)
             bar = QRectF(x, top, self._bar_w, height)
@@ -155,14 +156,19 @@ class VuMeter(QWidget):
                            QColor(peak_color))
             # Segmentation, selon le style choisi (styles.VU_STYLE ou celui de l'interface)
             p.setPen(Qt.PenStyle.NoPen)
-            if shape in ("segments", "led", "lcd"):
-                step, gap = {"led": (6, 2), "lcd": (4, 1.5)}.get(shape, (SEGMENT_PX, 1))
+            if shape in ("segments", "led", "lcd", "pixel"):
+                step, gap = {"led": (6, 2), "lcd": (4, 1.5), "pixel": (5, 2)}.get(shape, (SEGMENT_PX, 1))
                 back = styles.LCD_BG if shape == "lcd" else styles.BG_SECTION
                 shade = styles.color(back, 0.85 if gap > 1 else 0.55)
                 y = top + step
                 while y < bottom:
                     p.fillRect(QRectF(x, y, self._bar_w, gap), shade)
                     y += step
+            if shape == "outline":            # contour au trait
+                p.setBrush(Qt.BrushStyle.NoBrush)
+                p.setPen(QPen(styles.color(styles.TEXT_MUTED, 0.8), 1))
+                p.drawRect(bar.adjusted(-0.5, -0.5, 0.5, 0.5))
+                p.setPen(Qt.PenStyle.NoPen)
             # LED de saturation au-dessus de chaque barre
             if self._clip_leds:
                 lit = self._clip_until[i] > now
@@ -187,7 +193,7 @@ class ClipLed(QWidget):
 
     def paintEvent(self, _event) -> None:  # noqa: N802
         p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        styles.smooth(p)
         p.setPen(Qt.PenStyle.NoPen)
         if self._lit:
             p.setBrush(styles.color(styles.RED_MUTE, 0.35))

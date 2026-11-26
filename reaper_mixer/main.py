@@ -836,6 +836,12 @@ def run_selftest(app: QApplication, cfg: dict, window: MainWindow, vm, reaper, p
     if styles.INTERFACE.key != "retro" or window.strips[0].orientation() != interfaces.HORIZONTAL:
         problems.append("style d'interface non appliqué")
     capture(image.with_name(f"{image.stem}_interface{image.suffix}"), window)
+    for key in interfaces.INTERFACES:       # chaque style se dessine sans erreur
+        interfaces.apply_interface(ui_cfg, key)
+        window.apply_appearance()
+        pump(0.05)
+        if window.grab().isNull() or styles.INTERFACE.key != key:
+            problems.append(f"style d'interface « {key} » non dessiné")
     for key, value in saved.items():
         if value is None:
             ui_cfg.pop(key, None)

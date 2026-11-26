@@ -46,19 +46,32 @@ class Interface:
     name: str
     description: str
     palette: dict[str, str] = field(default_factory=dict)   # couleurs propres du style
+    # Palette construite à partir de 4 couleurs (fenêtre, colonnes, accent, texte) ;
+    # `palette` la complète ou la corrige
+    base: tuple[str, str, str, str] | None = None
     font: str | None = None          # police propre (si la police choisie est celle d'origine)
     radius: float = 1.0              # facteur des arrondis (1 = REKA)
     max_radius: float = 99.0         # arrondi maximal (px)
-    knob: str = "reka"               # dessin des knobs : reka, flat, chrome, arc
+    knob: str = "reka"               # knobs : reka, flat, chrome, arc, cap, hardware,
+                                     #   outline, pixel, dots, fluent, ring
     fader: str | None = None         # curseur des faders ; None = style choisi dans Apparence
+                                     #   (sinon aussi flat, chrome, line, fluent, outline,
+                                     #   pixel, touch, block)
     vu: str | None = None            # VU-mètres ; None = style choisi dans Apparence
-    borders: str = "solid"           # bordures des panneaux : solid, none, bevel
+                                     #   (sinon aussi flat, lcd, line, outline, pixel)
+    borders: str = "solid"           # bordures des panneaux : solid, none, bevel, dashed, thick
     glow: bool = True                # halos et lueurs (knobs, badge, curseurs)
     lcd: bool = False                # afficheurs LCD (noms, valeurs, effets)
-    background: str = "glow"         # fond de la fenêtre : glow, flat, brushed
+    background: str = "glow"         # fond de la fenêtre : glow, flat, brushed, grid, wood,
+                                     #   aurora, scanlines, mica
     titles: bool = True              # titres de section (« Effets »)
     scale_labels: bool = True        # chiffres de l'échelle des faders
     visualizer: bool = False         # égaliseur visuel animé dans le Master
+    needle: bool = False             # VU-mètre à aiguille dans le Master
+    decor: str = ""                  # ornements des panneaux : screws (vis), brackets (coins HUD)
+    panel_alpha: float = 1.0         # opacité propre des panneaux (verre dépoli)
+    antialias: bool = True           # False : dessin pixelisé
+    big: bool = False                # cibles tactiles : boutons et knobs plus grands
     orientation: str = DEFAULT_ORIENTATION   # disposition conseillée, appliquée au choix du style
     density: str = DEFAULT_DENSITY
 
@@ -66,6 +79,11 @@ class Interface:
     def own_shapes(self) -> bool:
         """Le style dessine ses propres faders et VU (les choix d'Apparence ne s'appliquent pas)."""
         return self.fader is not None or self.vu is not None
+
+    @property
+    def has_palette(self) -> bool:
+        """Le style a ses propres couleurs (sinon il suit toujours le thème)."""
+        return bool(self.palette or self.base)
 
 
 # Couleurs du style « Cantabile » : gris unis, plats, accent bleu de sélection
@@ -129,6 +147,93 @@ INTERFACES: dict[str, Interface] = {i.key: i for i in (
               MINIMAL_PALETTE, radius=0.6, max_radius=8, knob="arc", fader="line", vu="line",
               borders="none", glow=False, background="flat", titles=False, scale_labels=False,
               density="aeree"),
+    Interface("analog", "Console analogique",
+              "Table de mixage de studio : métal brossé vissé, capuchons de couleur sur les "
+              "knobs, VU-mètre à aiguille dans le Master.",
+              base=("#141518", "#2a2d32", "#f0b44c", "#ece8df"),
+              palette={"VU_BASE": "#7ed957", "LCD_BG": "#1a1206", "LCD_TEXT": "#ffc35c"},
+              font="Arial", radius=0.3, max_radius=4, knob="cap", fader="console", vu="led",
+              glow=False, background="brushed", decor="screws", needle=True),
+    Interface("rack", "Rack 19\"",
+              "Modules rackables en aluminium noir, vis aux coins, afficheurs rouges et "
+              "boutons de matériel ; un canal par unité de rack.",
+              base=("#050506", "#141416", "#ff4433", "#e4e4e6"),
+              palette={"VU_BASE": "#3ddc55", "LCD_BG": "#140303", "LCD_TEXT": "#ff4d3a",
+                       "KNOB_CAP_TOP": "#3a3a3e", "KNOB_CAP_BOTTOM": "#0c0c0e"},
+              font="Arial", radius=0.15, max_radius=2, knob="hardware", fader="flat", vu="led",
+              borders="bevel", glow=False, lcd=True, background="flat", decor="screws",
+              orientation=HORIZONTAL, density="compacte"),
+    Interface("fluent", "Windows 11",
+              "Comme une application de Windows 11 : fond Mica, coins arrondis, curseurs et "
+              "knobs façon Fluent, accent bleu clair.",
+              base=("#1c1c1c", "#2b2b2b", "#60cdff", "#ffffff"),
+              palette={"VU_BASE": "#60cdff"},
+              font="Segoe UI Variable Text", radius=0.6, max_radius=8, knob="fluent",
+              fader="fluent", vu="line", glow=False, background="mica"),
+    Interface("touch", "Tactile",
+              "Pour écran tactile ou tablette : gros boutons, gros curseurs, knobs plus grands, "
+              "rien de superflu.",
+              base=("#0e1216", "#1a2027", "#34d399", "#f1f5f9"),
+              radius=1.1, max_radius=16, knob="flat", fader="touch", vu="continu", glow=False,
+              background="flat", titles=False, scale_labels=False, big=True, density="aeree"),
+    Interface("terminal", "Terminal",
+              "Écran de terminal : texte vert monospace, cadres en pointillés, curseurs en "
+              "blocs, lignes de balayage.",
+              base=("#000000", "#030703", "#39ff6a", "#5dff86"),
+              palette={"TEXT_SECONDARY": "#2fcf58", "TEXT_MUTED": "#1d8a3a",
+                       "VU_BASE": "#39ff6a", "LCD_BG": "#000000", "LCD_TEXT": "#39ff6a",
+                       "KNOB_CAP_TOP": "#030703", "KNOB_CAP_BOTTOM": "#030703"},
+              font="Consolas", radius=0.0, max_radius=0, knob="dots", fader="block", vu="pixel",
+              borders="dashed", glow=False, lcd=True, background="scanlines"),
+    Interface("blueprint", "Plan d'architecte",
+              "Calque bleu quadrillé : tout est tracé au trait blanc, comme un plan technique.",
+              base=("#0b3a78", "#0f4a94", "#ffffff", "#ffffff"),
+              palette={"BORDER_COLUMN": "#8fb8ea", "BORDER_SECTION": "#5d8fcf",
+                       "TEXT_SECONDARY": "#cfe0f7", "TEXT_MUTED": "#9fc0ea",
+                       "VU_BASE": "#ffffff", "GREEN_DIM": "#4f7fc0", "ON_ACCENT": "#0b3a78",
+                       "ON_ACCENT_DARK": "#0b3a78"},
+              font="Consolas", radius=0.0, max_radius=0, knob="outline", fader="outline",
+              vu="outline", glow=False, background="grid", panel_alpha=0.35),
+    Interface("pixel", "Pixel 8-bit",
+              "Jeu vidéo rétro : gros pixels sans lissage, cadres épais, couleurs de console "
+              "8 bits.",
+              base=("#1a1c2c", "#29366f", "#ffcd75", "#f4f4f4"),
+              palette={"VU_BASE": "#a7f070", "BUTTON_BG": "#3b5dc9", "BUTTON_HOVER": "#41a6f6",
+                       "PILL_BG": "#1a1c2c", "BG_SECTION": "#333c57", "BORDER_COLUMN": "#0d0e18",
+                       "BORDER_SECTION": "#0d0e18", "PILL_BORDER": "#0d0e18"},
+              font="Courier New", radius=0.0, max_radius=0, knob="pixel", fader="pixel",
+              vu="pixel", borders="thick", glow=False, background="flat", antialias=False),
+    Interface("glass", "Verre",
+              "Verre dépoli sur un fond aux couleurs d'aurore : panneaux translucides, bords "
+              "lumineux, grands arrondis.",
+              base=("#110d2a", "#2a2352", "#7df9ff", "#f5f3ff"),
+              palette={"BORDER_COLUMN": "#7068b0", "BORDER_SECTION": "#544c92", "VU_BASE": "#7df9ff"},
+              radius=1.3, max_radius=20, knob="reka", fader="rond", vu="continu",
+              background="aurora", panel_alpha=0.45),
+    Interface("hifi", "Hi-fi 70s",
+              "Chaîne hi-fi vintage : façade argentée, coffret en noyer, boutons chromés et "
+              "VU-mètre à aiguille rétro-éclairé.",
+              base=("#2a1a10", "#d9d4c7", "#c2570c", "#2a2520"),
+              palette={"KNOB_CAP_TOP": "#fbfbfb", "KNOB_CAP_BOTTOM": "#80858c",
+                       "VU_BASE": "#3f8f3a", "LCD_BG": "#2a1a08", "LCD_TEXT": "#ffb547"},
+              font="Georgia", radius=0.3, max_radius=4, knob="chrome", fader="vintage", vu="led",
+              borders="bevel", glow=False, background="wood", decor="screws", needle=True),
+    Interface("brutal", "Brutaliste",
+              "Web brutaliste : blanc cassé, cadres noirs épais, angles droits, typographie "
+              "grasse, aucune fioriture.",
+              base=("#efece3", "#ffffff", "#0040ff", "#000000"),
+              palette={"BORDER_COLUMN": "#000000", "BORDER_SECTION": "#000000",
+                       "VU_BASE": "#000000", "KNOB_CAP_TOP": "#000000", "KNOB_CAP_BOTTOM": "#000000",
+                       "BUTTON_BG": "#ffffff", "BUTTON_HOVER": "#ffe600"},
+              font="Arial Black", radius=0.0, max_radius=0, knob="flat", fader="flat",
+              vu="continu", borders="thick", glow=False, background="flat"),
+    Interface("hud", "HUD sci-fi",
+              "Affichage tête haute de vaisseau : traits cyan, coins en crochets, anneaux "
+              "segmentés, grille holographique.",
+              base=("#02070b", "#06121a", "#22d3ee", "#cffafe"),
+              palette={"BORDER_COLUMN": "#0f4c5c", "BORDER_SECTION": "#0b3a46", "VU_BASE": "#22d3ee"},
+              font="Bahnschrift", radius=0.0, max_radius=0, knob="ring", fader="outline",
+              vu="segments", decor="brackets", background="grid", panel_alpha=0.75),
 )}
 
 

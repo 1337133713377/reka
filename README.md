@@ -80,9 +80,9 @@ Discord, Spotify, ton jeu, ton navigateur : chacun son volume et son mute, **dep
 </td>
 <td valign="top">
 
-### 🎨 Douze thèmes
+### 🎨 43 thèmes, 15 styles
 
-Synthwave, Matrix, Sakura, Braise… ou **ta couleur pour chaque élément** et ton image de fond.
+Dracula, Cyberpunk, Nord, thèmes clairs… quinze styles d'interface (console analogique, rack, terminal, pixel…), ou **ta couleur pour chaque élément** et ton image de fond.
 
 </td>
 </tr>
@@ -262,7 +262,7 @@ processeur. Pour le vrai 7.1 des jeux : *Paramètres son de Windows* → **Voice
 
 <a id="interface"></a>
 
-## 🖥️ Quatre styles d'interface
+## 🖥️ Quinze styles d'interface
 
 ⚙ → **Interface** : ce n'est plus seulement la couleur qui change, mais la forme de toute la console. Panneaux, knobs, faders, VU-mètres, police et fond. Chaque style a un aperçu réel avant de l'appliquer.
 
@@ -275,7 +275,13 @@ processeur. Pour le vrai 7.1 des jeux : *Paramètres son de Windows* → **Voice
 </table>
 
 <p align="center">
-  <sub>Et toujours le style <b>REKA</b> d'origine.</sub>
+  <img src="docs/interfaces-galerie.png" alt="Les quatorze autres styles d'interface" width="100%">
+</p>
+
+<p align="center">
+  <sub><b>Console analogique</b> (capuchons de couleur, VU à aiguille) · <b>Rack 19"</b> (modules vissés, afficheurs rouges) ·
+  <b>Windows 11</b> · <b>Tactile</b> (grosses cibles) · <b>Terminal</b> · <b>Plan d'architecte</b> · <b>Pixel 8-bit</b> ·
+  <b>Verre</b> · <b>Hi-fi 70s</b> (noyer, VU à aiguille) · <b>Brutaliste</b> · <b>HUD sci-fi</b>. Et toujours le style <b>REKA</b> d'origine.</sub>
 </p>
 
 <details>
@@ -283,7 +289,7 @@ processeur. Pour le vrai 7.1 des jeux : *Paramètres son de Windows* → **Voice
 
 <br>
 
-<img src="docs/reglages-interface.png" alt="Réglages, onglet Interface : les quatre styles avec leur aperçu" width="420" align="right">
+<img src="docs/reglages-interface.png" alt="Réglages, onglet Interface : les styles avec leur aperçu" width="420" align="right">
 
 - **Densité** : compacte, normale ou aérée.
 - **Strips** : verticales (console) ou horizontales (rack, une ligne par canal, fader et VU couchés).
@@ -300,7 +306,7 @@ Choisir un style applique sa disposition conseillée (Cantabile passe en lignes,
 
 <a id="themes"></a>
 
-## 🎨 Douze thèmes, ou le tien
+## 🎨 43 thèmes, ou le tien
 
 Un clic dans ⚙ → **Apparence** et toute la console change : couleurs, faders, VU-mètres.
 
@@ -315,10 +321,19 @@ Un clic dans ⚙ → **Apparence** et toute la console change : couleurs, faders
 <td width="33%" align="center"><img src="docs/theme-sakura.png" alt="Thème Sakura"><br><b>Sakura</b></td>
 <td width="33%" align="center"><img src="docs/theme-arcade.png" alt="Thème Arcade"><br><b>Arcade</b><br><sub>une couleur par canal</sub></td>
 </tr>
+<tr>
+<td width="33%" align="center"><img src="docs/theme-cyberpunk.png" alt="Thème Cyberpunk"><br><b>Cyberpunk</b></td>
+<td width="33%" align="center"><img src="docs/theme-dracula.png" alt="Thème Dracula"><br><b>Dracula</b></td>
+<td width="33%" align="center"><img src="docs/theme-neige.png" alt="Thème clair Neige"><br><b>Neige</b><br><sub>thème clair</sub></td>
+</tr>
 </table>
 
 <p align="center">
-  <sub>Et aussi : Dark Studio Pro · Néon · Or noir · Océan · Rubis · Monochrome</sub>
+  <sub>Rangés par catégorie : <b>Sobres</b> (Dark Studio Pro, Graphite, Minuit, Carbone…) ·
+  <b>Néon & rétro</b> (Outrun, Vaporwave, Toxique…) · <b>Chauds</b> (Volcan, Crépuscule, Ambre, Café…) ·
+  <b>Froids</b> (Aurore boréale, Abysse, Arctique…) · <b>Nature</b> (Forêt, Lavande, Désert, Menthe) ·
+  <b>Pastel</b> (Sakura, Bonbon, Pêche) · <b>Éditeurs de code</b> (Nord, Gruvbox, Solarized, Tokyo Night,
+  Catppuccin, Monokai, One Dark) · <b>Clairs</b> (Papier, Neige, Aube). Et un bouton « Thème au hasard ».</sub>
 </p>
 
 <details>

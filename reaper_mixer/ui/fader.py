@@ -153,7 +153,7 @@ class Fader(QWidget):
     # -------------------------------------------------------------- dessin
     def paintEvent(self, _event) -> None:  # noqa: N802
         p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        styles.smooth(p)
         self._paint_scale_labels(p)
         if self.horizontal:          # dessin vertical tourné : +12 dB à droite
             p.translate(self.width(), 0)
@@ -174,11 +174,16 @@ class Fader(QWidget):
         if shape == "line":
             self._paint_line(p, rail_x, top, bottom, cy, accent)
             return
+        if shape in self._PAINTERS:
+            getattr(self, self._PAINTERS[shape])(p, rail_x, top, bottom, cy, accent)
+            return
         if shape in ("flat", "chrome"):
             self._paint_slot(p, rail_x, top, bottom, cy, accent, shape)
         else:
             # Rail
             rail_color = "#4b5263" if self._muted else "#5b6577"
+            if styles.is_light():        # thème clair : rail plus marqué
+                rail_color = styles.mix(styles.TEXT_MUTED, styles.BG_COLUMN, 0.4 if self._muted else 0.0)
             p.setPen(QPen(styles.color(rail_color, 0.85), 2, Qt.PenStyle.SolidLine,
                           Qt.PenCapStyle.RoundCap))
             p.drawLine(QPointF(rail_x, top), QPointF(rail_x, bottom))
@@ -245,7 +250,9 @@ class Fader(QWidget):
             gradient.setColorAt(0, QColor(styles.WHITE))
             gradient.setColorAt(1, QColor("#d3d8de"))
         p.setBrush(gradient)
-        p.setPen(QPen(styles.color(styles.WHITE, 0.35), 1))
+        # Liseré clair, ou foncé sur un thème clair (le curseur blanc reste détouré)
+        p.setPen(QPen(styles.color(styles.TEXT_MUTED, 0.9) if styles.is_light()
+                      else styles.color(styles.WHITE, 0.35), 1))
         p.drawRoundedRect(thumb.adjusted(0.5, 0.5, -0.5, -0.5), radius, radius)
         if self._dragging and not self._muted and styles.INTERFACE.glow:   # halo pendant la saisie
             p.setPen(QPen(styles.color(accent, 0.8), 1.5))
@@ -323,6 +330,97 @@ class Fader(QWidget):
         p.setBrush(QColor(styles.TEXT_PRIMARY if not self._muted else styles.TEXT_MUTED))
         width = 18 if self._dragging else 14
         p.drawRoundedRect(QRectF(rail_x - width / 2, cy - 2, width, 4), 2, 2)
+
+    # Curseurs des autres styles d'interface : (p, rail, haut, bas, position, accent)
+    _PAINTERS = {"fluent": "_paint_fluent", "outline": "_paint_outline", "pixel": "_paint_pixel",
+                 "touch": "_paint_touch", "block": "_paint_block"}
+
+    def _fill_color(self, accent: str) -> QColor:
+        return QColor(styles.TEXT_MUTED if self._muted else accent)
+
+    def _paint_fluent(self, p, rail_x, top, bottom, cy, accent) -> None:
+        """« Windows 11 » : piste fine, pouce rond avec un cœur d'accent."""
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor(styles.BUTTON_HOVER))
+        p.drawRoundedRect(QRectF(rail_x - 2, top, 4, bottom - top), 2, 2)
+        p.setBrush(self._fill_color(accent))
+        p.drawRoundedRect(QRectF(rail_x - 2, cy, 4, max(0.0, bottom - cy)), 2, 2)
+        p.setPen(QPen(styles.color(styles.BG_BLACK, 0.35), 1))
+        p.setBrush(QColor(styles.mix(styles.BUTTON_HOVER, styles.WHITE, 0.15)))
+        p.drawEllipse(QPointF(rail_x, cy), 10, 10)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(self._fill_color(accent))
+        core = 6.5 if self._dragging else 5.0
+        p.drawEllipse(QPointF(rail_x, cy), core, core)
+
+    def _paint_outline(self, p, rail_x, top, bottom, cy, accent) -> None:
+        """« Plan d'architecte » / « HUD » : rail et curseur au trait, remplissage hachuré."""
+        ink = self._fill_color(accent)
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.setPen(QPen(styles.color(styles.TEXT_MUTED, 0.8), 1))
+        rail = QRectF(rail_x - 3, top, 6, bottom - top)
+        p.drawRect(rail)
+        fill = QRectF(rail.x(), cy, rail.width(), max(0.0, bottom - cy))
+        p.fillRect(fill, styles.color(ink.name(), 0.3))
+        p.setPen(QPen(ink, 1))
+        y = bottom - 3
+        while y > cy:                       # hachures
+            p.drawLine(QPointF(rail.left(), y), QPointF(rail.right(), y - 3))
+            y -= 4
+        thumb = QRectF(rail_x - THUMB_W / 2, cy - 6, THUMB_W, 12)
+        p.fillRect(thumb, QColor(styles.BG_COLUMN))
+        p.setPen(QPen(ink, 1.4 if self._dragging else 1.1))
+        p.drawRect(thumb)
+        p.drawLine(QPointF(thumb.left() - 3, cy), QPointF(thumb.right() + 3, cy))
+
+    def _paint_pixel(self, p, rail_x, top, bottom, cy, accent) -> None:
+        """« Pixel 8-bit » : rail en briques, curseur carré à contour épais."""
+        px = 2
+        rail = QRectF(round(rail_x) - 3, round(top), 6, round(bottom - top))
+        p.fillRect(rail, QColor(styles.BORDER_COLUMN))
+        p.fillRect(rail.adjusted(px, px, -px, -px), QColor(styles.BG_DEEP))
+        level = round(cy)
+        p.fillRect(QRectF(rail.x() + px, level, rail.width() - 2 * px, max(0, rail.bottom() - px - level)),
+                   self._fill_color(accent))
+        thumb = QRectF(round(rail_x - 10), round(cy - 7), 20, 14)
+        p.fillRect(thumb, QColor(styles.BORDER_COLUMN))
+        p.fillRect(thumb.adjusted(px, px, -px, -px),
+                   QColor(styles.TEXT_MUTED if self._muted else styles.TEXT_PRIMARY))
+        p.fillRect(QRectF(thumb.left() + px, thumb.top() + px, thumb.width() - 2 * px, px),
+                   QColor(styles.WHITE))
+        p.fillRect(QRectF(thumb.left() + px, round(cy) - 1, thumb.width() - 2 * px, px),
+                   self._fill_color(accent))
+
+    def _paint_touch(self, p, rail_x, top, bottom, cy, accent) -> None:
+        """« Tactile » : gros rail, gros curseur facile à attraper au doigt."""
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor(styles.BUTTON_BG))
+        p.drawRoundedRect(QRectF(rail_x - 4, top, 8, bottom - top), 4, 4)
+        p.setBrush(self._fill_color(accent))
+        p.drawRoundedRect(QRectF(rail_x - 4, cy, 8, max(0.0, bottom - cy)), 4, 4)
+        thumb = QRectF(rail_x - 13, cy - 17, 26, 34)
+        p.setBrush(styles.color(styles.BG_BLACK, 0.4))
+        p.drawRoundedRect(thumb.translated(0, 2), 8, 8)
+        p.setBrush(QColor("#e9edf1" if not self._muted else "#8b9096"))
+        p.setPen(QPen(QColor(accent) if self._dragging else styles.color(styles.BG_BLACK, 0.3), 2 if self._dragging else 1))
+        p.drawRoundedRect(thumb, 8, 8)
+        p.setPen(QPen(self._fill_color(accent), 3, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+        p.drawLine(QPointF(thumb.left() + 6, cy), QPointF(thumb.right() - 6, cy))
+
+    def _paint_block(self, p, rail_x, top, bottom, cy, accent) -> None:
+        """« Terminal » : rail en pointillés de caractères, curseur en bloc plein."""
+        ink = self._fill_color(accent)
+        y = top
+        while y < bottom:
+            lit = y >= cy
+            p.fillRect(QRectF(rail_x - 1.5, y, 3, 2), ink if lit else styles.color(ink.name(), 0.25))
+            y += 4
+        block = QRectF(rail_x - 9, cy - 4, 18, 8)
+        p.fillRect(block, ink)
+        if self._dragging:
+            p.setPen(QPen(ink, 1))
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.drawRect(block.adjusted(-2, -2, 2, 2))
 
     # ------------------------------------------------------------ interaction
     def mousePressEvent(self, event) -> None:  # noqa: N802
