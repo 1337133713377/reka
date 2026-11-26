@@ -9,6 +9,7 @@
     commands.txt  écrit par l'app   : commandes numérotées
     state.txt     écrit par le pont : projet, pistes, effets, carte son, accusés (~5 fois/s)
     fxlist.txt    écrit par le pont : plugins installés, sur demande
+    spectrum.txt  écrit par le pont : spectre de chaque strip (~15 fois/s), si demandé
   Une ligne par enregistrement, champs séparés par des tabulations,
   « \ », tabulation et retour à la ligne échappés en \\, \t, \n.
   Chaque fichier se termine par « END <n> » : un fichier lu pendant son
@@ -18,6 +19,14 @@
   sa piste est la première piste REAPER dont l'entrée commence sur ce canal.
   Le câblage des pistes existantes n'est jamais modifié ; une piste n'est
   créée que lorsqu'on ajoute un effet à une strip qui n'en a pas.
+
+  Analyseur de spectre (commande « spectrum ») : l'effet JSFX « REKA Spectrum »
+  (Effects/REKA/reka_spectrum.jsfx, installé par l'app) est placé en dernier
+  sur la piste de chaque strip, après tous ses effets ; il laisse passer le
+  son tel quel et écrit ses bandes dans la mémoire partagée « REKA_spectrum ».
+  Il est caché dans l'état envoyé à l'app (les index des effets ne bougent
+  pas : il reste toujours le dernier), et retiré quand l'analyseur s'éteint
+  ou au démarrage du pont.
 ]]
 
 local DIR = os.getenv("REKA_IPC")
@@ -27,10 +36,18 @@ DIR = DIR:gsub("\\", "/"):gsub("/+$", "")
 local CMD_PATH = DIR .. "/commands.txt"
 local STATE_PATH = DIR .. "/state.txt"
 local FXLIST_PATH = DIR .. "/fxlist.txt"
+local SPECTRUM_PATH = DIR .. "/spectrum.txt"
 
 local STATE_PERIOD = 0.2     -- s : écriture de l'état, sert aussi de battement de cœur
 local AUTOSAVE_PERIOD = 30   -- s : sauvegarde du projet s'il a été modifié
 local MAX_ERRORS = 20
+local SPECTRUM_PERIOD = 0.066    -- s : spectres envoyés à l'app
+local ANALYZER_PERIOD = 1.0      -- s : analyseurs remis en place (nouvelle piste, projet…)
+local SPECTRUM_STALE = 0.6       -- s : sans nouvelle analyse, la strip est muette
+local ANALYZER_NAME = "REKA Spectrum"
+local ANALYZER_QUERIES = { "JS:REKA/reka_spectrum.jsfx", "JS:REKA/reka_spectrum", "JS:REKA Spectrum" }
+local GMEM = "REKA_spectrum"
+local GMEM_STRIDE = 32           -- cases par strip ; la dernière compte les analyses
 
 local session = nil          -- identifiant de la session de l'app
 local last_seq = 0           -- dernière commande exécutée
@@ -38,6 +55,12 @@ local state_n = 0
 local last_state_t = 0
 local last_autosave_t = reaper.time_precise()
 local errors = {}            -- { {seq, message}, ... }
+local spectrum_channels = nil -- canaux des strips analysées (nil : analyseur éteint)
+local spectrum_n = 0
+local last_spectrum_t = 0
+local last_analyzer_t = -1e9
+local analyses = {}          -- canal → { compteur, instant du dernier changement }
+local analyzer_missing = false
 
 -- ------------------------------------------------------------------ texte
 local UNESCAPE = { ["\\"] = "\\", t = "\t", n = "\n" }
@@ -112,6 +135,85 @@ local function strip_track(channel)
   local tr = find_track(channel)
   if not tr then error("aucune piste REAPER n'écoute les canaux de cette strip", 0) end
   return tr
+end
+
+-- ------------------------------------------------- analyseur de spectre
+local function is_analyzer(tr, i)
+  local _, name = reaper.TrackFX_GetFXName(tr, i, "")
+  return (name or ""):find(ANALYZER_NAME, 1, true) ~= nil
+end
+
+local function remove_analyzers(tr)
+  for i = reaper.TrackFX_GetCount(tr) - 1, 0, -1 do
+    if is_analyzer(tr, i) then reaper.TrackFX_Delete(tr, i) end
+  end
+end
+
+-- Un seul analyseur, en dernier sur la piste ; false si REAPER ne le trouve pas
+local function ensure_analyzer(tr, channel)
+  local found = nil
+  for i = reaper.TrackFX_GetCount(tr) - 1, 0, -1 do
+    if is_analyzer(tr, i) then
+      if found then reaper.TrackFX_Delete(tr, i) else found = i end
+    end
+  end
+  if not found then
+    found = -1
+    for _, query in ipairs(ANALYZER_QUERIES) do
+      found = reaper.TrackFX_AddByName(tr, query, false, -1)
+      if found >= 0 then break end
+    end
+    if found < 0 then return false end
+    reaper.TrackFX_SetParam(tr, found, 0, channel)
+  end
+  local last = reaper.TrackFX_GetCount(tr) - 1
+  if found ~= last then reaper.TrackFX_CopyToTrack(tr, found, tr, last, true) end
+  return true
+end
+
+-- Analyseurs sur les pistes des strips analysées, et nulle part ailleurs
+local function sync_analyzers()
+  local wanted = {}
+  for _, channel in ipairs(spectrum_channels or {}) do
+    local tr = find_track(channel)
+    if tr then wanted[tr] = channel end
+  end
+  local missing = false
+  for t = 0, reaper.CountTracks(0) - 1 do
+    local tr = reaper.GetTrack(0, t)
+    if wanted[tr] then
+      if not ensure_analyzer(tr, wanted[tr]) then missing = true end
+    else
+      remove_analyzers(tr)
+    end
+  end
+  if missing and not analyzer_missing then
+    add_error(0, "REAPER ne trouve pas l'effet « REKA Spectrum » (Effects/REKA) : "
+                 .. "relance REAPER depuis REKA pour l'installer")
+  end
+  analyzer_missing = missing
+end
+
+-- Bandes de chaque strip analysée, lues dans la mémoire partagée de l'effet
+local function write_spectrum(now)
+  spectrum_n = spectrum_n + 1
+  local out = { "SPECTRUM " .. spectrum_n }
+  for _, channel in ipairs(spectrum_channels or {}) do
+    local base = channel * GMEM_STRIDE
+    local count = reaper.gmem_read(base + GMEM_STRIDE - 1)
+    local seen = analyses[channel]
+    if not seen or seen[1] ~= count then
+      analyses[channel] = { count, now }
+      seen = analyses[channel]
+    end
+    if count > 0 and now - seen[2] < SPECTRUM_STALE then
+      local values = {}
+      for b = 0, 23 do values[#values + 1] = math.floor(reaper.gmem_read(base + b) + 0.5) end
+      out[#out + 1] = "S\t" .. channel .. "\t" .. table.concat(values, ",")
+    end
+  end
+  out[#out + 1] = "END " .. spectrum_n
+  write_file(SPECTRUM_PATH, table.concat(out, "\n") .. "\n")
 end
 
 -- Nouvelle piste câblée sur l'insert Voicemeeter : entrée stéréo `channel`
@@ -220,6 +322,25 @@ local HANDLERS = {
     reaper.Main_openProject("noprompt:" .. a[1])
   end,
   save = function() save_project() end,
+  -- Analyseur de spectre : 1 et la liste des canaux des strips, ou 0
+  spectrum = function(a)
+    if a[1] == "1" then
+      if not reaper.gmem_attach then
+        error("cette version de REAPER n'a pas de mémoire partagée (REAPER 6 ou plus récent)", 0)
+      end
+      spectrum_channels = {}
+      for channel in (a[2] or ""):gmatch("%d+") do
+        spectrum_channels[#spectrum_channels + 1] = tonumber(channel)
+      end
+      reaper.gmem_attach(GMEM)
+    else
+      spectrum_channels = nil
+      write_file(SPECTRUM_PATH, "OFF\n")
+    end
+    analyses = {}
+    sync_analyzers()
+    last_analyzer_t = reaper.time_precise()
+  end,
   list_fx = function(a) write_fxlist(a[1]) end,
   action = function(a) reaper.Main_OnCommand(tonumber(a[1]), 0) end,
 }
@@ -296,7 +417,12 @@ local function build_state()
   for t = 0, reaper.CountTracks(0) - 1 do
     local tr = reaper.GetTrack(0, t)
     local _, name = reaper.GetSetMediaTrackInfo_String(tr, "P_NAME", "", false)
-    local count = reaper.TrackFX_GetCount(tr)
+    -- L'analyseur de spectre de REKA n'est pas un effet de l'utilisateur : caché
+    local user_fx = {}
+    for i = 0, reaper.TrackFX_GetCount(tr) - 1 do
+      if not is_analyzer(tr, i) then user_fx[#user_fx + 1] = i end
+    end
+    local count = #user_fx
     out[#out + 1] = table.concat({
       "TRACK", t, escape(name),
       reaper.GetMediaTrackInfo_Value(tr, "I_FXEN") ~= 0 and 1 or 0,
@@ -306,10 +432,10 @@ local function build_state()
       math.floor(reaper.GetMediaTrackInfo_Value(tr, "I_RECMON")),
       reaper.GetTrackNumSends(tr, 1),
     }, "\t")
-    for i = 0, count - 1 do
+    for n, i in ipairs(user_fx) do
       local _, fx_name = reaper.TrackFX_GetFXName(tr, i, "")
       out[#out + 1] = table.concat({
-        "FX", t, i, escape(fx_name),
+        "FX", t, n - 1, escape(fx_name),
         reaper.TrackFX_GetEnabled(tr, i) and 1 or 0,
         reaper.TrackFX_GetOpen(tr, i) and 1 or 0,
         fx_latency(tr, i),
@@ -326,7 +452,18 @@ end
 -- ------------------------------------------------------------- boucle
 local function tick()
   local now = reaper.time_precise()
-  if process_commands() or now - last_state_t >= STATE_PERIOD then
+  local changed = process_commands()
+  -- Analyseurs remis en dernier après une commande (effet ajouté, déplacé…) et
+  -- de temps en temps (piste créée, autre projet ouvert)
+  if spectrum_channels and (changed or now - last_analyzer_t >= ANALYZER_PERIOD) then
+    sync_analyzers()
+    last_analyzer_t = now
+  end
+  if spectrum_channels and now - last_spectrum_t >= SPECTRUM_PERIOD then
+    write_spectrum(now)
+    last_spectrum_t = now
+  end
+  if changed or now - last_state_t >= STATE_PERIOD then
     write_file(STATE_PATH, build_state())
     last_state_t = now
   end
@@ -343,4 +480,6 @@ local function loop()
 end
 
 reaper.atexit(function() write_file(STATE_PATH, "CLOSED\n") end)
+-- Analyseurs laissés par une session précédente (projet enregistré avec eux) : retirés
+pcall(sync_analyzers)
 loop()

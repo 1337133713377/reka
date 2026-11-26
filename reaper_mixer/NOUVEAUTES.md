@@ -5,9 +5,10 @@ effets, REAPER, FL Studio ou Equalizer APO. REKA se met ensuite à jour toute se
 ## Prochaine version
 
 - **Analyseur de spectre sur chaque strip** : le son de chaque entrée, après ses effets, des
-  graves aux aigus, en barres qui retombent doucement. ⚙ → Interface → Spectre. Le moteur
-  d'effets REKA (intégré) calcule le spectre lui-même, sans rien ajouter au son ; il se met en
-  pause quand la fenêtre est réduite.
+  graves aux aigus, en barres qui retombent doucement. ⚙ → Interface → Spectre. Avec
+  **REAPER**, un petit effet « REKA Spectrum » se place en dernier sur la piste de chaque strip
+  (invisible dans REKA, le son passe tel quel) ; avec le moteur **REKA (intégré)**, c'est lui
+  qui calcule. Il se met en pause quand la fenêtre est réduite.
 - **Assistant de premiers réglages** : au premier lancement, six étapes pour choisir son
   micro (avec un VU-mètre pour vérifier qu'il capte), son casque, le nom des canaux, Discord
   et son style. Se relance depuis ⚙ → Général.

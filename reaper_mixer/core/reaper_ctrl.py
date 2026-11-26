@@ -15,6 +15,11 @@ Fonctionnement :
   - les commandes sont numérotées et réécrites dans commands.txt tant que le
     pont n'en a pas accusé réception.
 
+Analyseur de spectre : l'effet JSFX assets/reka_spectrum.jsfx est installé
+dans Effects/REKA de REAPER ; quand l'analyseur est allumé, le pont le place
+en dernier sur la piste de chaque strip (après ses effets) et écrit les bandes
+dans spectrum.txt (~15 fois/s), lu ici.
+
 Strips ↔ pistes : la piste d'une strip est la première piste REAPER dont
 l'entrée commence sur le premier canal d'insert Voicemeeter de la strip. Ça
 marche avec n'importe quel projet de l'utilisateur, sans toucher à son câblage.
@@ -34,12 +39,13 @@ from pathlib import Path
 from PySide6.QtCore import QObject
 
 from core import config
-from core.effects import HOST_REAPER, EffectsHost, samples_to_ms
+from core.effects import HOST_REAPER, EffectsHost, parse_spectrum, samples_to_ms
 from core.voicemeeter_ctrl import strip_channels
 
 log = logging.getLogger(__name__)
 
 BRIDGE_FILENAME = "reka_bridge.lua"
+ANALYZER_FILENAME = "reka_spectrum.jsfx"     # installé dans Effects/REKA de REAPER
 IPC_ENV = "REKA_IPC"
 # ASCII uniquement : le fichier de l'utilisateur peut être dans n'importe quel encodage
 STARTUP_BEGIN = "-- >>> REKA (bloc gere automatiquement, ne pas modifier)"
@@ -231,9 +237,12 @@ class ReaperController(EffectsHost):
     can_move_fx = True
     has_projects = True
     has_audio_device = True
+    has_spectrum = True                   # effet JSFX « REKA Spectrum » sur chaque piste
 
     def __init__(self, cfg: dict, parent: QObject | None = None) -> None:
         super().__init__(cfg, parent)
+        self._spectrum = False
+        self._spectrum_n: str | None = None
         # Une strip est désignée auprès du pont par son premier canal d'insert
         self._channels = strip_channels(cfg)
         self._ipc_dir = config.app_data_dir() / "bridge"
@@ -354,9 +363,11 @@ class ReaperController(EffectsHost):
         self._ipc_dir.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(config.resource_path(f"assets/{BRIDGE_FILENAME}"),
                         self._ipc_dir / BRIDGE_FILENAME)
-        for stale in ("commands.txt", "state.txt", "fxlist.txt", "bridge_error.txt"):
+        for stale in ("commands.txt", "state.txt", "fxlist.txt", "bridge_error.txt", "spectrum.txt"):
             (self._ipc_dir / stale).unlink(missing_ok=True)
-        install_startup_hook(self.resource_path(exe))
+        resources = self.resource_path(exe)
+        install_startup_hook(resources)
+        install_analyzer(resources)
         # Nouvel essai (« Réessayer ») : le thread de lecture du premier essai
         # tourne encore ; il doit réécrire commands.txt (qui vient d'être effacé)
         # et attendre le battement de cœur du nouveau REAPER.
@@ -384,6 +395,9 @@ class ReaperController(EffectsHost):
         return self._ready.wait(timeout_s)
 
     def close(self, save_project: bool = True) -> None:
+        if self._spectrum and self._connected:   # le projet n'est pas enregistré avec l'analyseur
+            self._spectrum = False
+            self._send("spectrum", 0)
         if save_project and self._connected:
             seq = self._send("save")
             if not self._wait_ack(seq, SAVE_TIMEOUT_S):
@@ -444,6 +458,21 @@ class ReaperController(EffectsHost):
             self._fx_request = (request, time.monotonic())
         self._send("list_fx", request)
 
+    def set_spectrum(self, on: bool) -> None:
+        """Analyseur de spectre : effet « REKA Spectrum » en dernier sur chaque piste."""
+        on = bool(on)
+        if on == self._spectrum:
+            return
+        self._spectrum = on
+        self._spectrum_n = None
+        self._send_spectrum()
+
+    def _send_spectrum(self) -> None:
+        if self._spectrum:
+            self._send("spectrum", 1, ",".join(str(c) for c in self._channels))
+        else:
+            self._send("spectrum", 0)
+
     def _strip_name(self, strip: int) -> str:
         names = self._cfg.get("ui", {}).get("strip_names", [])
         return names[strip] if strip < len(names) else f"Strip {strip + 1}"
@@ -479,6 +508,8 @@ class ReaperController(EffectsHost):
                 self._write_commands()
                 self._read_state()
                 self._read_fxlist()
+                if self._spectrum:
+                    self._read_spectrum()
                 self._check_bridge_error()
             except Exception:
                 log.exception("Erreur dans la liaison avec REAPER")
@@ -549,6 +580,20 @@ class ReaperController(EffectsHost):
             self.tracks_changed.emit(list(tracks))
         self._ready.set()
 
+    def _read_spectrum(self) -> None:
+        """Spectres écrits par le pont : une liste de bandes par strip (None : muette)."""
+        try:
+            text = (self._ipc_dir / "spectrum.txt").read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return
+        bands = parse_bridge_spectrum(text, self._channels)
+        if bands is None:
+            return
+        n, values = bands
+        if n != self._spectrum_n:
+            self._spectrum_n = n
+            self.spectrum_changed.emit(values)
+
     def _read_fxlist(self) -> None:
         with self._lock:
             request = self._fx_request
@@ -594,10 +639,46 @@ class ReaperController(EffectsHost):
         if connected != self._connected:
             self._connected = connected
             log.info("REAPER %s.", "connecté" if connected else "déconnecté")
+            if connected and self._spectrum:   # REAPER relancé : l'analyseur repart
+                self._send_spectrum()
             if not connected:
                 with self._ack_changed:
                     self._ack_changed.notify_all()
             self.connection_changed.emit(connected)
+
+
+def parse_bridge_spectrum(text: str, channels: list[int]) -> tuple[str, list] | None:
+    """(numéro, bandes de chaque strip) d'un spectrum.txt complet, None sinon
+    (absent, éteint ou en cours d'écriture). Une strip sans ligne est muette."""
+    lines = text.splitlines()
+    if len(lines) < 2 or not lines[0].startswith("SPECTRUM "):
+        return None
+    n = lines[0].split(" ", 1)[1]
+    if lines[-1] != f"END {n}":
+        return None
+    by_channel: dict[int, list] = {}
+    for line in lines[1:-1]:
+        fields = line.split("\t")
+        if len(fields) == 3 and fields[0] == "S" and fields[1].isdigit():
+            by_channel[int(fields[1])] = fields[2].split(",")
+    raw = [by_channel.get(channel) for channel in channels]
+    return n, parse_spectrum(raw, len(channels))
+
+
+def install_analyzer(resource_path: Path) -> Path | None:
+    """Copie l'effet JSFX de l'analyseur dans Effects/REKA de REAPER (s'il a changé)."""
+    source = config.resource_path(f"assets/{ANALYZER_FILENAME}")
+    target = resource_path / "Effects" / "REKA" / ANALYZER_FILENAME
+    try:
+        data = source.read_bytes()
+        if not target.is_file() or target.read_bytes() != data:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(data)
+            log.info("Analyseur de spectre installé dans %s", target)
+    except OSError as exc:
+        log.warning("Analyseur de spectre non installé dans REAPER : %s", exc)
+        return None
+    return target
 
 
 # --------------------------------------------------------------------------- #

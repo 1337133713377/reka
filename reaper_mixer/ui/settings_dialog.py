@@ -810,8 +810,9 @@ class SettingsDialog(QDialog):
         self.spectrum_box.setEnabled(has_spectrum)
         form.addRow("Spectre", self.spectrum_box)
         if not has_spectrum:
-            form.addRow(_hint("L'analyseur de spectre lit le son dans le moteur d'effets REKA "
-                              "(intégré) : choisis-le dans Général → Effets pour l'activer."))
+            form.addRow(_hint("L'analyseur de spectre lit le son dans REAPER ou dans le moteur "
+                              "d'effets REKA (intégré) : choisis l'un d'eux dans Général → Effets "
+                              "pour l'activer."))
         form.addRow(_hint("Compacte resserre les marges ; aérée laisse respirer. Horizontale range "
                           "chaque canal sur une ligne, fader et VU couchés. Animations : pulsation "
                           "du badge, fondu des messages, knob du casque, égaliseur du Lecteur 2000."))

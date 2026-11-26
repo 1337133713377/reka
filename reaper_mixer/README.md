@@ -290,9 +290,16 @@ en cours dans le Master*.
 ⚙ → onglet **Interface** : le style de toute la console (15 styles, avec un aperçu réel), la
 densité, l'orientation des strips, les animations, et l'**analyseur de spectre** : sous chaque
 Intellipan (ou à côté du fader en lignes), le son de la strip après ses effets, des graves (à
-gauche) aux aigus, en barres qui retombent doucement avec un chapeau sur les crêtes. C'est le
-moteur d'effets REKA (intégré) qui calcule le spectre (FFT de 2048 points, 24 bandes de 30 Hz à
-16 kHz), sans rien ajouter au son ; il ne travaille que quand la fenêtre est affichée.
+gauche) aux aigus, en barres qui retombent doucement avec un chapeau sur les crêtes (FFT de
+2048 points, 24 bandes de 30 Hz à 16 kHz), sans rien changer au son ; il ne travaille que quand
+la fenêtre est affichée. Il marche avec deux moteurs d'effets :
+
+- **REKA (intégré)** : le moteur calcule lui-même le spectre de chaque strip.
+- **REAPER** : REKA installe l'effet JSFX « REKA Spectrum » (`Effects/REKA` de REAPER) et le
+  place **en dernier** sur la piste de chaque strip, après tous ses effets. Il laisse passer le
+  son tel quel, sans latence, et n'apparaît pas dans la liste des effets de REKA. Il est retiré
+  quand l'analyseur s'éteint et avant l'enregistrement du projet à la fermeture. Si la chaîne
+  d'une strip est en bypass (badge FX), sa strip n'est plus analysée.
 
 ⚙ → onglet **Apparence** :
 

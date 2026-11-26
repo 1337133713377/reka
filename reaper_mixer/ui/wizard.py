@@ -261,7 +261,7 @@ class FirstRunWizard(QDialog):
         self.spectrum_box.setChecked(bool(ui_cfg.get("spectrum", False)))
         self.spectrum_box.setEnabled(bool(getattr(self._reaper, "has_spectrum", False)))
         if not self.spectrum_box.isEnabled():
-            self.spectrum_box.setToolTip("Avec le moteur d'effets REKA (intégré) seulement")
+            self.spectrum_box.setToolTip("Avec REAPER ou le moteur d'effets REKA (intégré)")
         self.spectrum_box.toggled.connect(lambda on: self._set_ui("spectrum", on))
         box.addWidget(self.spectrum_box)
         box.addStretch(1)

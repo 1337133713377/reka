@@ -181,3 +181,47 @@ def test_no_spectrum_option_without_reka_engine(qapp, mixer, monkeypatch):
     finally:
         window._cfg["ui"].pop("spectrum", None)
         window.apply_appearance()
+
+
+def test_reaper_analyzer_jsfx():
+    """L'effet JSFX installé dans REAPER : nom attendu par le pont, mémoire partagée,
+    son intact, même calcul que l'hôte (vérifié ici avec numpy sur le même algorithme)."""
+    import re
+
+    from core.effects import SPECTRUM_BANDS
+
+    source = (ROOT / "assets" / "reka_spectrum.jsfx").read_text(encoding="utf-8")
+    bridge = (ROOT / "assets" / "reka_bridge.lua").read_text(encoding="utf-8")
+    assert source.startswith("desc:REKA Spectrum")
+    assert 'ANALYZER_NAME = "REKA Spectrum"' in bridge
+    assert "options:gmem=REKA_spectrum" in source and 'GMEM = "REKA_spectrum"' in bridge
+    assert "slider1:0<0,1023,1>" in source and "TrackFX_SetParam(tr, found, 0, channel)" in bridge
+    assert not re.search(r"\bspl[01]\s*=[^=]", source)       # le son n'est jamais modifié
+    assert f"bands = {SPECTRUM_BANDS};" in source and "size = 2048;" in source
+    for section in ("@init", "@sample", "@block"):
+        assert source.count(section) == 1
+
+    # Même algorithme en numpy (s'il est installé) : étalonnage sur une sinusoïde, crête par bande
+    np = pytest.importorskip("numpy")
+    size, rate = 2048, 48000.0
+    win = 0.5 - 0.5 * np.cos(2 * np.pi * np.arange(size) / (size - 1))
+    cal = np.abs(np.fft.rfft(np.sin(2 * np.pi * 64 * np.arange(size) / size) * win))[1:].max()
+    high = min(16000.0, rate / 2)
+
+    def bands(signal):
+        spectrum = np.abs(np.fft.rfft(signal * win)) / cal
+        out = []
+        for b in range(SPECTRUM_BANDS):
+            lo, hi = 30 * (high / 30) ** (b / 24), 30 * (high / 30) ** ((b + 1) / 24)
+            first = max(1, int(np.floor(lo / (rate / size))))
+            last = max(first, min(size // 2 - 1, int(np.ceil(hi / (rate / size))) - 1))
+            peak = spectrum[first:last + 1].max()
+            out.append(max(-90.0, min(0.0, 20 * np.log10(peak))) if peak > 1e-9 else -90.0)
+        return out
+
+    t = np.arange(size) / rate
+    full = bands(np.sin(2 * np.pi * 1000 * t))
+    assert -3 < max(full) <= 0                               # pleine échelle ≈ 0 dB
+    quiet = bands(0.1 * np.sin(2 * np.pi * 1000 * t))
+    assert -23 < max(quiet) < -17                            # -20 dB
+    assert int(np.argmax(full)) == int(np.argmax(quiet))

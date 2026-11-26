@@ -140,3 +140,87 @@ def test_bridge_end_to_end(qapp, cfg, tmp_path):
 
     assert "saved=0" not in summary()
     assert (Path(env["REKA_IPC"]) / "state.txt").read_text().startswith("CLOSED")
+
+
+def test_spectrum_with_reaper(qapp, cfg, tmp_path):
+    """Analyseur de spectre avec REAPER : l'effet « REKA Spectrum » en dernier sur
+    la piste de chaque strip, caché à l'app, ses bandes relues par le pont."""
+    from core.reaper_ctrl import ANALYZER_FILENAME, ReaperController
+
+    cfg["reaper"]["resource_path"] = str(tmp_path / "reaper_res")
+    ctrl = ReaperController(cfg)
+    spectra, tracks, fails = [], [], []
+    ctrl.spectrum_changed.connect(spectra.append)
+    ctrl.tracks_changed.connect(tracks.append)
+    ctrl.command_failed.connect(fails.append)
+    env = ctrl.prepare_launch(Path("reaper.exe"))
+    jsfx = tmp_path / "reaper_res" / "Effects" / "REKA" / ANALYZER_FILENAME
+    assert jsfx.is_file() and "options:gmem=REKA_spectrum" in jsfx.read_text()
+    startup = tmp_path / "reaper_res" / "Scripts" / "__startup.lua"
+    stop = tmp_path / "stop"
+    summary_path = Path(env["REKA_IPC"]) / "fake_summary.txt"
+    proc = subprocess.Popen([LUA, str(HERE / "fake_reaper.lua"), str(startup), str(stop)],
+                            env={**os.environ, **env},
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    def wait_for(condition, timeout=6.0):
+        end = time.monotonic() + timeout
+        while time.monotonic() < end:
+            pump(qapp, 0.05)
+            if condition():
+                return True
+        return False
+
+    def summary():
+        return summary_path.read_text() if summary_path.is_file() else ""
+
+    try:
+        ctrl.start()
+        assert ctrl.ping(6.0)
+        assert ctrl.has_spectrum
+        pump(qapp, 0.3)
+        assert not spectra                                   # rien sans demande
+        ctrl.set_spectrum(True)
+        # Pistes des strips Microphone (0), Musique (2), Autres 1 (4) : analysées ;
+        # Appels, Bureau, Autres 2 n'ont pas de piste : muettes
+        assert wait_for(lambda: spectra and spectra[-1][0] is not None)
+        last = spectra[-1]
+        assert last[0] == [-10.0 - 2 * b for b in range(24)]
+        assert last[1] is not None and last[4] is not None
+        assert last[2] is None and last[3] is None and last[5] is None
+        assert wait_for(lambda: "fx1=JS:_REKA_Spectrum " in summary()), summary()
+        assert not tracks[-1][0].fx                          # caché à l'app
+
+        # Un effet ajouté passe avant l'analyseur, qui reste le dernier
+        ctrl.add_fx(0, "VST3: Pro-Q 4 (FabFilter)")
+        assert wait_for(lambda: "fx1=VST3:_Pro-Q_4_(FabFilter),JS:_REKA_Spectrum" in summary()), \
+            summary()
+        assert wait_for(lambda: [f.display_name for f in tracks[-1][0].fx] == ["Pro-Q 4 (FabFilter)"])
+        ctrl.add_fx(0, "VST: ReaLimit (Cockos)")
+        ctrl.move_fx(0, 0, 0, 5)                             # tout au bout de la chaîne
+        assert wait_for(lambda: "fx1=VST:_ReaLimit_(Cockos),VST3:_Pro-Q_4_(FabFilter),"
+                                "JS:_REKA_Spectrum" in summary()), summary()
+        assert wait_for(lambda: [f.display_name for f in tracks[-1][0].fx] ==
+                        ["ReaLimit (Cockos)", "Pro-Q 4 (FabFilter)"])
+        ctrl.remove_fx(0, 1)                                 # l'index vise bien Pro-Q 4
+        assert wait_for(lambda: [f.display_name for f in tracks[-1][0].fx] == ["ReaLimit (Cockos)"])
+
+        # Chaîne coupée : plus d'analyse, la strip devient muette
+        ctrl.set_chain_enabled(0, False)
+        assert wait_for(lambda: spectra[-1][0] is None and spectra[-1][1] is not None)
+        ctrl.set_chain_enabled(0, True)
+        assert wait_for(lambda: spectra[-1][0] is not None)
+
+        # Éteint : l'analyseur quitte toutes les pistes
+        ctrl.set_spectrum(False)
+        assert wait_for(lambda: "REKA_Spectrum" not in summary())
+        ctrl.set_spectrum(True)
+        assert wait_for(lambda: summary().count("JS:_REKA_Spectrum") == 3)
+
+        # Fermeture : le projet est enregistré sans l'analyseur
+        ctrl.close(save_project=True)
+        assert wait_for(lambda: "REKA_Spectrum" not in summary())
+        assert not fails, fails
+    finally:
+        stop.write_text("stop")
+        proc.wait(10)

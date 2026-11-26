@@ -14,7 +14,9 @@ local installed = {
   { "VST3: Pro-Q 4 (FabFilter)", "FabFilter Pro-Q 4.vst3" },
   { "VST: ReaLimit (Cockos)", "realimit.dll" },
   { "JS: Volume Adjustment", "utility/volume" },
+  { "JS: REKA Spectrum", "REKA/reka_spectrum.jsfx" },   -- analyseur de REKA
 }
+local gmem, gmem_name = {}, nil
 
 local function new_track(rec_input, hw_dst)
   local tr = { name = "", fx = {}, sends = {},
@@ -46,10 +48,10 @@ function reaper.CreateTrackSend(tr, dest) assert(dest == nil); tr.sends[#tr.send
 function reaper.SetTrackSendInfo_Value(tr, cat, idx, key, v) assert(cat == 1); tr.sends[idx + 1][key] = v; return true end
 function reaper.TrackFX_AddByName(tr, name)
   for _, p in ipairs(installed) do
-    if p[1] == name then
+    if p[1] == name or "JS:" .. p[2] == name then
       -- ReaLimit : 2,5 ms d'anticipation à 48 kHz (120 échantillons)
       local pdc = name:find("ReaLimit") and 120 or 0
-      tr.fx[#tr.fx + 1] = { name = name, enabled = true, open = false, pdc = pdc }
+      tr.fx[#tr.fx + 1] = { name = p[1], enabled = true, open = false, pdc = pdc, params = {} }
       return #tr.fx - 1
     end
   end
@@ -63,11 +65,14 @@ function reaper.TrackFX_CopyToTrack(src, from, dst, to, is_move)
   if is_move then
     table.remove(src.fx, from + 1)
   else
-    fx = { name = fx.name, enabled = fx.enabled, open = false, pdc = fx.pdc }
+    fx = { name = fx.name, enabled = fx.enabled, open = false, pdc = fx.pdc, params = {} }
   end
   table.insert(dst.fx, math.min(to, #dst.fx) + 1, fx)
 end
 function reaper.TrackFX_SetEnabled(tr, i, e) tr.fx[i + 1].enabled = e end
+function reaper.TrackFX_SetParam(tr, i, p, v) tr.fx[i + 1].params[p] = v; return true end
+function reaper.gmem_attach(name) gmem_name = name end
+function reaper.gmem_read(i) return gmem[i] or 0 end
 function reaper.TrackFX_GetEnabled(tr, i) return tr.fx[i + 1].enabled end
 function reaper.TrackFX_GetOpen(tr, i) return tr.fx[i + 1].open end
 function reaper.TrackFX_Show(tr, i, flag) tr.fx[i + 1].open = (flag == 3) end
@@ -101,6 +106,21 @@ function reaper.ShowConsoleMsg(s) end
 function reaper.defer(fn) deferred = fn end
 function reaper.atexit(fn) atexit_fn = fn end
 
+-- L'analyseur « joue » : sur une piste écoutée dont la chaîne est active, il
+-- écrit des bandes (de plus en plus fortes vers les graves) et son compteur
+local function run_analyzers()
+  for _, tr in ipairs(tracks) do
+    for _, fx in ipairs(tr.fx) do
+      if fx.name == "JS: REKA Spectrum" and gmem_name == "REKA_spectrum"
+          and tr.values.I_FXEN ~= 0 and fx.enabled then
+        local base = math.floor(fx.params[0] or 0) * 32
+        for b = 0, 23 do gmem[base + b] = -10 - b * 2 end
+        gmem[base + 31] = (gmem[base + 31] or 0) + 1
+      end
+    end
+  end
+end
+
 dofile(startup)
 
 -- Résumé pour le test Python, réécrit à chaque tour
@@ -111,6 +131,9 @@ local function summary()
     parts[#parts + 1] = string.format("t%d=%s|in%d|arm%d|mon%d|mode%d|main%d|dst%s", i, tr.name,
       tr.values.I_RECINPUT, tr.values.I_RECARM, tr.values.I_RECMON, tr.values.I_RECMODE or 0,
       tr.values.B_MAINSEND, tostring(tr.sends[1] and tr.sends[1].I_DSTCHAN))
+    local chain = {}
+    for _, fx in ipairs(tr.fx) do chain[#chain + 1] = fx.name:gsub("%s", "_") end
+    parts[#parts + 1] = string.format("fx%d=%s", i, table.concat(chain, ","))
   end
   local out = io.open(os.getenv("REKA_IPC") .. "/fake_summary.txt", "w")
   out:write(table.concat(parts, " ") .. "\n")
@@ -124,6 +147,7 @@ while true do
   deferred = nil
   if not fn then break end
   fn()
+  run_analyzers()
   summary()
   now = now + 0.034
   os.execute("sleep 0.03")

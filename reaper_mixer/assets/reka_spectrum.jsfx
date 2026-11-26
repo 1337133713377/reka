@@ -1,0 +1,106 @@
+desc:REKA Spectrum
+//tags: analysis spectrum REKA
+//author: REKA
+//
+// Analyseur de spectre de REKA. Placé par REKA en dernier sur la piste de
+// chaque strip (après tous ses effets) quand l'analyseur de spectre est
+// allumé, et retiré quand il est éteint.
+//
+// Le son passe tel quel : aucune modification, aucune latence.
+//
+// Une quinzaine de fois par seconde, les 2048 derniers échantillons (mono :
+// moyenne gauche / droite) sont fenêtrés (Hann), passés par une FFT, et
+// l'énergie est regroupée en 24 bandes logarithmiques de 30 Hz à 16 kHz, en
+// dB (une sinusoïde à pleine échelle vaut 0 dB, plancher -90 dB) : le même
+// calcul que le moteur intégré de REKA (native/reka-host/src/spectrum.h).
+//
+// Les bandes partent dans la mémoire partagée « REKA_spectrum », lue par le
+// pont de REKA (reka_bridge.lua) : 32 cases par strip, à partir de
+// canal × 32 (canal = premier canal d'insert Voicemeeter de la strip) ;
+// cases 0 à 23 : les bandes ; case 31 : compteur d'analyses (il avance tant
+// que du son passe).
+
+slider1:0<0,1023,1>-Canal d'insert de la strip
+
+options:gmem=REKA_spectrum
+in_pin:left
+in_pin:right
+out_pin:left
+out_pin:right
+
+@init
+size = 2048;
+bands = 24;
+floor_db = -90;
+ring = 0;              // tampon circulaire mono [0, size)
+work = 4096;           // FFT [4096, 6144)
+win = 8192;            // fenêtre de Hann [8192, 10240)
+pos = 0;
+pending = 0;           // échantillons reçus depuis la dernière analyse
+wsum = 0;
+i = 0;
+loop(size,
+  win[i] = 0.5 - 0.5 * cos(2 * $pi * i / (size - 1));
+  wsum += win[i];
+  ring[i] = 0;
+  i += 1;
+);
+// Étalonnage : une sinusoïde de pleine échelle, fenêtrée, passée dans la même
+// FFT, doit valoir 0 dB. Le facteur ne dépend donc pas de la convention
+// d'échelle de fft_real.
+i = 0;
+loop(size,
+  work[i] = sin(2 * $pi * 64 * i / size) * win[i];
+  i += 1;
+);
+fft_real(work, size);
+fft_permute(work, size / 2);
+cal = 0;
+k = 1;
+loop(size / 2 - 1,
+  cal = max(cal, sqrt(work[2 * k] * work[2 * k] + work[2 * k + 1] * work[2 * k + 1]));
+  k += 1;
+);
+scale = cal > 0 ? 1 / cal : 2 / wsum;
+
+@sample
+// Rien n'est modifié : spl0 et spl1 repartent tels quels
+ring[pos] = 0.5 * (spl0 + spl1);
+pos += 1;
+pos >= size ? pos = 0;
+pending += 1;
+
+@block
+pending >= srate / 15 ? (
+  pending = 0;
+  i = 0;
+  loop(size,
+    j = pos + i;
+    j >= size ? j -= size;
+    work[i] = ring[j] * win[i];
+    i += 1;
+  );
+  fft_real(work, size);
+  fft_permute(work, size / 2);
+  bin_hz = srate / size;
+  high = min(16000, srate * 0.5);
+  base = slider1 * 32;
+  b = 0;
+  loop(bands,
+    lo = 30 * (high / 30) ^ (b / bands);
+    hi = 30 * (high / 30) ^ ((b + 1) / bands);
+    first = max(1, floor(lo / bin_hz));
+    last = max(first, min(size / 2 - 1, ceil(hi / bin_hz) - 1));
+    peak = 0;
+    k = first;
+    loop(last - first + 1,
+      re = work[2 * k];
+      im = work[2 * k + 1];
+      peak = max(peak, sqrt(re * re + im * im) * scale);
+      k += 1;
+    );
+    gmem[base + b] = peak > 0.000000001 ? max(floor_db, min(0, 20 * log10(peak))) : floor_db;
+    b += 1;
+  );
+  gmem[base + 31] += 1;
+);
