@@ -282,9 +282,11 @@ en cours dans le Master*.
 
 ⚙ → onglet **Apparence** :
 
-- **Thèmes prédéfinis** : douze thèmes complets à appliquer d'un clic — Dark Studio Pro, Néon,
-  Synthwave, Braise, Glace, Matrix, Or noir, Sakura, Océan, Rubis, Arcade (une couleur par
-  canal) et Monochrome. Un thème règle la couleur d'accent, les couleurs de chaque élément et
+- **Thèmes prédéfinis** : 43 thèmes complets à appliquer d'un clic, rangés par catégorie
+  (Sobres, Néon & rétro, Chauds, Froids, Nature, Pastel, Éditeurs de code, Clairs), avec un
+  filtre et un bouton « Thème au hasard » — Dark Studio Pro, Synthwave, Cyberpunk, Outrun,
+  Volcan, Aurore boréale, Forêt, Nord, Dracula, Gruvbox, Catppuccin, Papier, Neige… Beaucoup
+  ont leur propre fond (sombre ou clair), pas seulement une couleur d'accent. Un thème règle la couleur d'accent, les couleurs de chaque élément et
   le style des faders et des VU-mètres ; l'arrière-plan et la police sont conservés. Tu peux
   ensuite tout retoucher ; si tu avais choisi des couleurs à la main, REKA demande
   confirmation avant de les remplacer.

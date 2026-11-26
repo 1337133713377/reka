@@ -6,8 +6,8 @@ Réglages de REKA, en onglets :
   - Interface  : style de toute la console (REKA, Cantabile, Lecteur 2000,
                  Minimal) avec aperçu, densité, orientation des strips,
                  animations, couleurs du style ou les siennes (mode mixte)
-  - Apparence  : thème de couleur, image d'arrière-plan, transparence des
-                 panneaux, fenêtre
+  - Apparence  : thèmes prédéfinis (par catégorie, au hasard), thème de
+                 couleur, image d'arrière-plan, transparence des panneaux, fenêtre
   - Couleurs   : couleur de chaque élément (knobs, Muet, VU…), pour toute
                  la console, un canal ou le Master
   - Discord    : Rich Presence, micro synchronisé avec le Muet d'un canal,
@@ -883,20 +883,67 @@ class SettingsDialog(QDialog):
 
     # ---------------------------------------------------------- Apparence
     def _presets_group(self) -> QGroupBox:
-        group = QGroupBox("Thèmes prédéfinis")
+        group = QGroupBox(f"Thèmes prédéfinis ({len(styles.PRESETS)})")
         box = QVBoxLayout(group)
-        grid = QGridLayout()
-        grid.setSpacing(8)
-        self.preset_cards: dict[str, PresetCard] = {}
-        for n, preset in enumerate(styles.PRESETS.values()):
-            card = PresetCard(preset)
-            card.clicked.connect(lambda _checked=False, key=preset.key: self.apply_preset(key))
-            self.preset_cards[preset.key] = card
-            grid.addWidget(card, n // PRESET_COLUMNS, n % PRESET_COLUMNS)
-        box.addLayout(grid)
         self.preset_label = _hint("")
         box.addWidget(self.preset_label)
+        row = QHBoxLayout()
+        row.addWidget(QLabel("Afficher"))
+        self.preset_filter = QComboBox()
+        self.preset_filter.addItem("Toutes les catégories", None)
+        groups = styles.presets_by_category()
+        for category, presets in groups:
+            self.preset_filter.addItem(f"{category} ({len(presets)})", category)
+        self.preset_filter.currentIndexChanged.connect(lambda _i: self._filter_presets())
+        row.addWidget(self.preset_filter, 1)
+        surprise = QPushButton("Thème au hasard")
+        surprise.setToolTip("Applique un thème prédéfini tiré au sort")
+        surprise.clicked.connect(lambda: self.random_preset())
+        row.addWidget(surprise)
+        box.addLayout(row)
+
+        self.preset_cards: dict[str, PresetCard] = {}
+        self.preset_sections: dict[str, tuple[QLabel, QWidget]] = {}
+        for category, presets in groups:
+            header = QLabel(category)
+            header.setObjectName("sectionTitle")
+            box.addWidget(header)
+            holder = QWidget()
+            grid = QGridLayout(holder)
+            grid.setContentsMargins(0, 0, 0, 4)
+            grid.setSpacing(8)
+            for n, preset in enumerate(presets):
+                card = PresetCard(preset)
+                card.clicked.connect(lambda _checked=False, key=preset.key: self.apply_preset(key))
+                self.preset_cards[preset.key] = card
+                grid.addWidget(card, n // PRESET_COLUMNS, n % PRESET_COLUMNS)
+            for column in range(PRESET_COLUMNS):     # cartes de même largeur d'une catégorie à l'autre
+                grid.setColumnStretch(column, 1)
+            box.addWidget(holder)
+            self.preset_sections[category] = (header, holder)
         return group
+
+    def _filter_presets(self) -> None:
+        """Seulement les thèmes de la catégorie choisie (ou tous)."""
+        chosen = self.preset_filter.currentData()
+        for category, (header, holder) in self.preset_sections.items():
+            visible = chosen is None or category == chosen
+            header.setVisible(visible)
+            holder.setVisible(visible)
+
+    def random_preset(self, rng=None) -> str | None:
+        """Applique un thème prédéfini tiré au sort (pas celui en cours), dans la
+        catégorie affichée ; renvoie sa clé, None si rien n'a été appliqué."""
+        import random
+
+        chosen = self.preset_filter.currentData()
+        current = styles.current_preset(self._cfg.get("ui", {}))
+        keys = [key for key, preset in styles.PRESETS.items()
+                if key != current and (chosen is None or preset.category == chosen)]
+        if not keys:
+            return None
+        key = (rng or random).choice(keys)
+        return key if self.apply_preset(key) else None
 
     def apply_preset(self, key: str, confirm: bool = True) -> bool:
         """Applique un thème prédéfini tout de suite : accent, couleurs de chaque
@@ -1531,6 +1578,14 @@ class SettingsDialog(QDialog):
             self.theme_swatches[theme].setChecked(True)
             self.custom_swatch.color = None
             self.theme_label.setText(f"Thème : {styles.THEMES[theme][0]}")
+        elif theme in styles.PALETTES:          # palette complète d'un thème prédéfini
+            self.theme_group.setExclusive(False)
+            for swatch in self.theme_swatches.values():
+                swatch.setChecked(False)
+            self.theme_group.setExclusive(True)
+            self.custom_swatch.color = None
+            self.theme_label.setText(f"Thème : {styles.theme_name(theme)} (fond et couleurs du thème "
+                                     "prédéfini ; une pastille ne garde que la couleur d'accent)")
         else:
             self.theme_group.setExclusive(False)
             for swatch in self.theme_swatches.values():

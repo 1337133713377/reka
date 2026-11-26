@@ -417,3 +417,61 @@ def test_preset_cards_in_settings(qapp, mixer):
         dialog.apply_preset("studio", confirm=False)      # palette d'origine pour les tests suivants
         dialog.done(0)
     assert styles.current_theme() == "studio" and styles.FADER_STYLE == styles.DEFAULT_FADER_STYLE
+
+
+def test_palette_themes_and_light_themes(qapp):
+    from PySide6.QtGui import QColor
+
+    from ui import styles
+
+    assert len(styles.PRESETS) >= 40
+    assert [c for c, _ in styles.presets_by_category()] == list(styles.PRESET_CATEGORIES)
+    assert all(p.category in styles.PRESET_CATEGORIES for p in styles.PRESETS.values())
+    for key, (name, palette) in styles.PALETTES.items():
+        assert set(styles._THEMED) <= set(palette), key
+        assert styles.theme_name(key) == name and styles.theme_accent(key) is not None
+        # Texte lisible, encre lisible sur l'accent (badge FX allumé)
+        assert styles.contrast(QColor(palette["TEXT_PRIMARY"]), QColor(palette["BG_COLUMN"])) >= 7
+        assert styles.contrast(QColor(palette["GREEN_NEON"]), QColor(palette["ON_ACCENT"])) >= 4.5
+    try:
+        assert styles.set_theme("dracula") == "dracula" and styles.BG_COLUMN == "#282a36"
+        assert not styles.is_light() and styles.RED_DIM == "#3a1416"
+        assert styles.set_theme("neige") == "neige" and styles.is_light()
+        assert styles.RED_DIM != "#3a1416"            # LED éteinte rosée sur fond clair
+        # Bouton des knobs foncé : l'index blanc reste lisible
+        assert styles.contrast(QColor(styles.KNOB_CAP_TOP), QColor("#ffffff")) >= 3
+    finally:
+        styles.set_theme(styles.DEFAULT_THEME)
+    assert styles.RED_DIM == "#3a1416" and not styles.is_light()
+
+
+def test_preset_categories_filter_and_random(qapp, mixer):
+    import random
+
+    from ui import styles
+    from ui.settings_dialog import SettingsDialog
+
+    window, vm, reaper = mixer
+    dialog = SettingsDialog(window._cfg, None, reaper, vm, window, persist=False)
+    dialog.appearanceChanged.connect(window.apply_appearance)
+    ui_cfg = window._cfg["ui"]
+    try:
+        dialog.show_tab("Apparence")
+        assert set(dialog.preset_sections) == set(styles.PRESET_CATEGORIES)
+        dialog.preset_filter.setCurrentIndex(dialog.preset_filter.findData("Clairs"))
+        visible = [c for c, (header, _h) in dialog.preset_sections.items() if header.isVisibleTo(dialog)]
+        assert visible == ["Clairs"]
+        key = dialog.random_preset(random.Random(3))   # tiré dans la catégorie affichée
+        assert styles.PRESETS[key].category == "Clairs" and dialog.preset_cards[key].isChecked()
+        assert ui_cfg["theme"] == key and styles.is_light()
+        assert "fond et couleurs" in dialog.theme_label.text()
+        assert not any(s.isChecked() for s in dialog.theme_swatches.values())
+        window.grab()
+        dialog.preset_filter.setCurrentIndex(0)
+        assert all(h.isVisibleTo(dialog) for h, _ in dialog.preset_sections.values())
+        other = dialog.random_preset(random.Random(1))
+        assert other != key and ui_cfg["theme"] == styles.PRESETS[other].theme
+    finally:
+        dialog.apply_preset("studio", confirm=False)
+        dialog.done(0)
+    assert styles.current_theme() == "studio" and not styles.is_light()

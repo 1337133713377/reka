@@ -179,6 +179,8 @@ class Fader(QWidget):
         else:
             # Rail
             rail_color = "#4b5263" if self._muted else "#5b6577"
+            if styles.is_light():        # thème clair : rail plus marqué
+                rail_color = styles.mix(styles.TEXT_MUTED, styles.BG_COLUMN, 0.4 if self._muted else 0.0)
             p.setPen(QPen(styles.color(rail_color, 0.85), 2, Qt.PenStyle.SolidLine,
                           Qt.PenCapStyle.RoundCap))
             p.drawLine(QPointF(rail_x, top), QPointF(rail_x, bottom))
@@ -245,7 +247,9 @@ class Fader(QWidget):
             gradient.setColorAt(0, QColor(styles.WHITE))
             gradient.setColorAt(1, QColor("#d3d8de"))
         p.setBrush(gradient)
-        p.setPen(QPen(styles.color(styles.WHITE, 0.35), 1))
+        # Liseré clair, ou foncé sur un thème clair (le curseur blanc reste détouré)
+        p.setPen(QPen(styles.color(styles.TEXT_MUTED, 0.9) if styles.is_light()
+                      else styles.color(styles.WHITE, 0.35), 1))
         p.drawRoundedRect(thumb.adjusted(0.5, 0.5, -0.5, -0.5), radius, radius)
         if self._dragging and not self._muted and styles.INTERFACE.glow:   # halo pendant la saisie
             p.setPen(QPen(styles.color(accent, 0.8), 1.5))

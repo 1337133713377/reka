@@ -80,9 +80,9 @@ Discord, Spotify, ton jeu, ton navigateur : chacun son volume et son mute, **dep
 </td>
 <td valign="top">
 
-### 🎨 Douze thèmes
+### 🎨 43 thèmes, 4 styles
 
-Synthwave, Matrix, Sakura, Braise… ou **ta couleur pour chaque élément** et ton image de fond.
+Dracula, Cyberpunk, Nord, thèmes clairs… quatre styles d'interface, ou **ta couleur pour chaque élément** et ton image de fond.
 
 </td>
 </tr>
@@ -300,7 +300,7 @@ Choisir un style applique sa disposition conseillée (Cantabile passe en lignes,
 
 <a id="themes"></a>
 
-## 🎨 Douze thèmes, ou le tien
+## 🎨 43 thèmes, ou le tien
 
 Un clic dans ⚙ → **Apparence** et toute la console change : couleurs, faders, VU-mètres.
 
@@ -315,10 +315,19 @@ Un clic dans ⚙ → **Apparence** et toute la console change : couleurs, faders
 <td width="33%" align="center"><img src="docs/theme-sakura.png" alt="Thème Sakura"><br><b>Sakura</b></td>
 <td width="33%" align="center"><img src="docs/theme-arcade.png" alt="Thème Arcade"><br><b>Arcade</b><br><sub>une couleur par canal</sub></td>
 </tr>
+<tr>
+<td width="33%" align="center"><img src="docs/theme-cyberpunk.png" alt="Thème Cyberpunk"><br><b>Cyberpunk</b></td>
+<td width="33%" align="center"><img src="docs/theme-dracula.png" alt="Thème Dracula"><br><b>Dracula</b></td>
+<td width="33%" align="center"><img src="docs/theme-neige.png" alt="Thème clair Neige"><br><b>Neige</b><br><sub>thème clair</sub></td>
+</tr>
 </table>
 
 <p align="center">
-  <sub>Et aussi : Dark Studio Pro · Néon · Or noir · Océan · Rubis · Monochrome</sub>
+  <sub>Rangés par catégorie : <b>Sobres</b> (Dark Studio Pro, Graphite, Minuit, Carbone…) ·
+  <b>Néon & rétro</b> (Outrun, Vaporwave, Toxique…) · <b>Chauds</b> (Volcan, Crépuscule, Ambre, Café…) ·
+  <b>Froids</b> (Aurore boréale, Abysse, Arctique…) · <b>Nature</b> (Forêt, Lavande, Désert, Menthe) ·
+  <b>Pastel</b> (Sakura, Bonbon, Pêche) · <b>Éditeurs de code</b> (Nord, Gruvbox, Solarized, Tokyo Night,
+  Catppuccin, Monokai, One Dark) · <b>Clairs</b> (Papier, Neige, Aube). Et un bouton « Thème au hasard ».</sub>
 </p>
 
 <details>
