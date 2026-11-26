@@ -303,6 +303,7 @@ class MainWindow(QMainWindow):
         reaper.device_changed.connect(self._on_device)
         reaper.project_changed.connect(self._on_project)
         reaper.command_failed.connect(self.toast.show_message)
+        reaper.spectrum_changed.connect(self._on_spectrum)
         measurable = load is not None and load.can_measure and reaper.manages_fx
         for strip in self.strips:
             strip.configure_effects(reaper.add_label, reaper.strip_hint(strip.index),
@@ -923,6 +924,27 @@ class MainWindow(QMainWindow):
         self.toast.show_message(f"{what} {'allumé' if on else 'éteint'}"
                                 f"{'e' if key == 'eq' else ''}.")
 
+    def open_wizard(self) -> None:
+        """Assistant de premiers réglages (premier lancement, ⚙ → Général, --wizard)."""
+        from ui.wizard import FirstRunWizard
+
+        wizard = FirstRunWizard(self._cfg, self._vm, self._reaper, self)
+        wizard.appearanceChanged.connect(self.apply_appearance)
+        wizard.stripRenamed.connect(self.rename_strip)
+        wizard.discordChanged.connect(self.apply_discord)
+        wizard.exec()
+        self._cfg["wizard_done"] = True        # terminé, passé ou fermé : plus reproposé
+        open_listen = wizard.open_listen
+        delete_now(wizard)
+        self._save_config()
+        if open_listen:
+            self.open_settings("Écoute")
+
+    def maybe_open_wizard(self) -> None:
+        """Premier lancement : l'assistant s'ouvre une fois la console affichée."""
+        if self._cfg.get("wizard_done") is False:
+            QTimer.singleShot(400, self.open_wizard)
+
     def open_settings(self, tab: str | None = None) -> None:
         dialog = SettingsDialog(self._cfg, self._processes, self._reaper, self._vm, self,
                                 persist=self._persist, updater=self._updater,
@@ -962,6 +984,10 @@ class MainWindow(QMainWindow):
             dialog.accept()
 
         dialog.importRequested.connect(import_now)
+        # Assistant demandé depuis Général : ouvert après la fermeture des réglages
+        wizard = []
+        dialog.wizardRequested.connect(lambda: wizard.append(True))
+        dialog.wizardRequested.connect(dialog.accept)
         # « Installer la mise à jour » (onglet À propos) : après la fermeture des réglages
         update = []
         dialog.updateRequested.connect(lambda: update.append(True))
@@ -971,6 +997,8 @@ class MainWindow(QMainWindow):
         self.refresh_engine_buttons()   # « Afficher la fenêtre… » des réglages
         if restart:
             self.restart_app()
+        elif wizard:
+            self.open_wizard()
         elif update:
             self.open_update()
 
@@ -990,6 +1018,7 @@ class MainWindow(QMainWindow):
         if app is not None:
             styles.refresh(app, float(ui_cfg.get("panel_opacity", DEFAULT_PANEL_OPACITY)))
         self.apply_layout()
+        self._update_spectrum()
         for strip in self.strips:             # couleurs par élément (feuilles de style)
             strip.apply_colors()
         self.master.apply_colors()
@@ -1003,10 +1032,28 @@ class MainWindow(QMainWindow):
                 widget.update()
             self.update()
 
+    def spectrum_wanted(self) -> bool:
+        """Analyseur de spectre demandé (réglages → Interface) et possible avec ce moteur."""
+        return bool(self._cfg.get("ui", {}).get("spectrum", False)) and self._reaper.has_spectrum
+
+    def _update_spectrum(self) -> None:
+        """Le moteur n'analyse le son que si les spectres sont visibles (fenêtre affichée)."""
+        self._reaper.set_spectrum(self.spectrum_wanted() and self.isVisible()
+                                  and not self.isMinimized())
+
+    def _on_spectrum(self, bands: list) -> None:
+        for strip, strip_bands in zip(self.strips, bands):
+            if strip.spectrum_shown():
+                strip.spectrum.set_bands(strip_bands)
+
     def apply_layout(self) -> None:
-        """Orientation des strips et densité (réglages → Interface)."""
+        """Orientation des strips, densité et analyseur de spectre (réglages → Interface)."""
         orientation, density = styles.ORIENTATION, styles.DENSITY
+        spectrum = self.spectrum_wanted()
         changed = (orientation, density) != (self._orientation, self._density)
+        spectrum_changed = any(strip.spectrum_shown() != spectrum for strip in self.strips)
+        for strip in self.strips:
+            strip.show_spectrum(spectrum)
         horizontal = orientation == interfaces.HORIZONTAL
         self.strip_box.setDirection(QBoxLayout.Direction.TopToBottom if horizontal
                                     else QBoxLayout.Direction.LeftToRight)
@@ -1026,6 +1073,9 @@ class MainWindow(QMainWindow):
             layout.activate()
             self._apply_minimum_size()
             self.reset_window_size()
+        elif spectrum_changed and not first:
+            layout.activate()            # analyseur ajouté : la fenêtre s'élargit si besoin
+            self._apply_minimum_size()
 
     # -------------------------------------------------------------- fenêtre
     def compact_size(self) -> tuple[int, int]:
@@ -1144,7 +1194,17 @@ class MainWindow(QMainWindow):
         if (event.type() == QEvent.Type.WindowStateChange and self.isMinimized()
                 and self._to_tray()):
             QTimer.singleShot(0, self.minimize)
+        if event.type() == QEvent.Type.WindowStateChange:
+            self._update_spectrum()
         super().changeEvent(event)
+
+    def showEvent(self, event) -> None:  # noqa: N802
+        super().showEvent(event)
+        self._update_spectrum()
+
+    def hideEvent(self, event) -> None:  # noqa: N802
+        super().hideEvent(event)
+        self._update_spectrum()
 
     def restart_app(self) -> None:
         """Relance REKA (changement d'édition de Voicemeeter) : la nouvelle

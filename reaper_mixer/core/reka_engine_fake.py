@@ -13,6 +13,7 @@ import base64
 import json
 import socket
 import threading
+import time
 from pathlib import Path
 
 PROTOCOL = 1
@@ -35,6 +36,9 @@ class FakeEngine:
         self.listen: dict | None = None           # réglages d'écoute au casque reçus
         self.received: list[dict] = []
         self.missing_paths: set[str] = set()      # chemins « non installés » (tests)
+        self.spectrum = False                     # analyseur demandé : spectres simulés
+        self._spectrum_thread: threading.Thread | None = None
+        self._write_lock = threading.Lock()       # deux fils écrivent (commandes, spectres)
         self._sock: socket.socket | None = None
         self._stop = threading.Event()
         self._exit: int | None = None
@@ -99,7 +103,8 @@ class FakeEngine:
         if self._sock is None:
             return
         try:
-            self._sock.sendall((json.dumps(message) + "\n").encode())
+            with self._write_lock:
+                self._sock.sendall((json.dumps(message) + "\n").encode())
         except OSError:
             pass
 
@@ -132,6 +137,13 @@ class FakeEngine:
                 self.listen = message["listen"]
         elif cmd == "listen":
             self.listen = message.get("listen") if isinstance(message.get("listen"), dict) else None
+        elif cmd == "spectrum":
+            self.spectrum = bool(message.get("on"))
+            if self.spectrum and not (self._spectrum_thread and self._spectrum_thread.is_alive()):
+                self._spectrum_thread = threading.Thread(target=self._spectrum_loop, daemon=True)
+                self._spectrum_thread.start()
+            self._write({"type": "ack", "id": ident})
+            return True
         elif cmd == "load":
             chains = message.get("chains", {}).get("strips", [])
             for strip, chain in zip(self.strips, chains):
@@ -187,6 +199,16 @@ class FakeEngine:
         if cmd not in ("get_chains",):
             self.send_state()
         return True
+
+    def _spectrum_loop(self) -> None:
+        """Comme l'hôte : un spectre par strip une quinzaine de fois par seconde."""
+        from core.demo import demo_spectrum
+
+        while self.spectrum and not self._stop.is_set():
+            bands = demo_spectrum(time.monotonic(), len(self.strips))
+            self._write({"type": "spectrum",
+                         "bands": [None if b is None else [round(v) for v in b] for b in bands]})
+            self._stop.wait(0.06)
 
     def chains(self) -> dict:
         return {"format": 1, "strips": [

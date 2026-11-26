@@ -425,7 +425,8 @@ def test_palette_themes_and_light_themes(qapp):
     from ui import styles
 
     assert len(styles.PRESETS) >= 40
-    assert [c for c, _ in styles.presets_by_category()] == list(styles.PRESET_CATEGORIES)
+    assert [c for c, _ in styles.presets_by_category()] == [   # « Mes thèmes » : vide au départ
+        c for c in styles.PRESET_CATEGORIES if c != styles.USER_CATEGORY]
     assert all(p.category in styles.PRESET_CATEGORIES for p in styles.PRESETS.values())
     for key, (name, palette) in styles.PALETTES.items():
         assert set(styles._THEMED) <= set(palette), key
@@ -457,7 +458,7 @@ def test_preset_categories_filter_and_random(qapp, mixer):
     ui_cfg = window._cfg["ui"]
     try:
         dialog.show_tab("Apparence")
-        assert set(dialog.preset_sections) == set(styles.PRESET_CATEGORIES)
+        assert set(dialog.preset_sections) == set(styles.PRESET_CATEGORIES) - {styles.USER_CATEGORY}
         dialog.preset_filter.setCurrentIndex(dialog.preset_filter.findData("Clairs"))
         visible = [c for c, (header, _h) in dialog.preset_sections.items() if header.isVisibleTo(dialog)]
         assert visible == ["Clairs"]

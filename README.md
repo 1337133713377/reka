@@ -260,6 +260,24 @@ processeur. Pour le vrai 7.1 des jeux : *Paramètres son de Windows* → **Voice
 
 <br>
 
+<a id="nouveautes-0-9"></a>
+
+## 🆕 Spectre, assistant et éditeur de thèmes
+
+- **Analyseur de spectre sur chaque strip** (⚙ → Interface) : le son de chaque entrée après ses effets, des graves aux aigus. Calculé par le moteur d'effets REKA (intégré).
+- **Assistant de premiers réglages** : micro (avec un VU-mètre pour vérifier), casque, noms des canaux, Discord et style, en six étapes. Il s'ouvre au premier lancement et se relance depuis ⚙ → Général.
+- **Éditeur de thèmes** (⚙ → Apparence → *Créer un thème…*) : quatre couleurs de base, la couleur des knobs, du fader et des VU, le style des faders, avec un aperçu en direct. Tes thèmes s'échangent en fichiers `.rekatheme`.
+
+<table>
+<tr>
+<td width="40%" align="center"><img src="docs/spectre.png" alt="Un analyseur de spectre sous chaque Intellipan"><br><b>Spectre par strip</b></td>
+<td width="30%" align="center"><img src="docs/assistant.png" alt="Assistant de premiers réglages, étape du micro"><br><b>Assistant</b></td>
+<td width="30%" align="center"><img src="docs/editeur-theme.png" alt="Éditeur de thèmes avec aperçu en direct"><br><b>Éditeur de thèmes</b></td>
+</tr>
+</table>
+
+<br>
+
 <a id="interface"></a>
 
 ## 🖥️ Quinze styles d'interface

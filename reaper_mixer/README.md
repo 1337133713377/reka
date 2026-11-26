@@ -94,6 +94,13 @@ indique s'il est installé sur le PC et le délai qu'il ajoute à la voix. On le
 ⚙ → **Général** (*Voicemeeter* / *Effets*, puis **Redémarrer REKA**), ou en lançant
 `REKA.exe --setup`.
 
+Une fois la console ouverte, un **assistant** guide les premiers réglages en six étapes : le
+micro de la première entrée (avec un VU-mètre : parle, la barre doit bouger), le casque
+(périphérique du bus du casque, et proposition d'égaliser le casque), les noms des canaux,
+Discord (Rich Presence, micro synchronisé) et le style (interface, thème, analyseur de
+spectre). Chaque choix s'applique tout de suite. *Passer l'assistant* garde ce qui est déjà
+choisi ; il se relance depuis ⚙ → **Général** → *Assistant*, ou avec `REKA.exe --wizard`.
+
 | Moteur | Effets | Délai ajouté |
 |---|---|---|
 | **REAPER** | VST2/VST3/CLAP gérés depuis REKA : ajout, bypass, interface, projets | 2 tampons ASIO (insert) + plugins |
@@ -280,6 +287,13 @@ en cours dans le Master*.
 
 ## Personnaliser l'interface
 
+⚙ → onglet **Interface** : le style de toute la console (15 styles, avec un aperçu réel), la
+densité, l'orientation des strips, les animations, et l'**analyseur de spectre** : sous chaque
+Intellipan (ou à côté du fader en lignes), le son de la strip après ses effets, des graves (à
+gauche) aux aigus, en barres qui retombent doucement avec un chapeau sur les crêtes. C'est le
+moteur d'effets REKA (intégré) qui calcule le spectre (FFT de 2048 points, 24 bandes de 30 Hz à
+16 kHz), sans rien ajouter au son ; il ne travaille que quand la fenêtre est affichée.
+
 ⚙ → onglet **Apparence** :
 
 - **Thèmes prédéfinis** : 43 thèmes complets à appliquer d'un clic, rangés par catégorie
@@ -290,6 +304,14 @@ en cours dans le Master*.
   le style des faders et des VU-mètres ; l'arrière-plan et la police sont conservés. Tu peux
   ensuite tout retoucher ; si tu avais choisi des couleurs à la main, REKA demande
   confirmation avant de les remplacer.
+- **Créer un thème…** : l'éditeur de thèmes. Quatre couleurs de base (fond de la fenêtre,
+  panneaux, accent, texte) dont REKA tire toute la palette — un fond clair donne un thème
+  clair —, la couleur des knobs d'envoi, du fader, des VU, du badge FX, du casque, du Muet et
+  des noms, et le style des faders et des VU. *Partir de* reprend un thème existant. Une
+  mini-console montre le résultat en direct, et un avertissement s'affiche si l'accent ou le
+  texte se lisent mal. Tes thèmes apparaissent dans **Mes thèmes** (config `ui.custom_themes`,
+  emportés par l'export `.reka`) ; *Modifier*, *Exporter…* (fichier `.rekatheme` à partager),
+  *Importer…* et *Supprimer* agissent sur celui qui est appliqué.
 - **Thème de couleur** : vert néon, cyan, bleu, violet, rose, rouge, orange, or, blanc, ou
   la pastille arc-en-ciel pour n'importe quelle couleur. Toute l'interface change tout de
   suite (knobs, VU-mètres, boutons, fonds teintés) ; le rouge du Muet et du petit cube

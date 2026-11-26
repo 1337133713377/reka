@@ -159,6 +159,7 @@ ORIENTATION = interfaces.DEFAULT_ORIENTATION
 ANIMATIONS = interfaces.DEFAULT_ANIMATIONS
 USER_FONT = DEFAULT_FONT      # police choisie (FONT_FAMILY : celle appliquée)
 _user_colors: dict[str, str] = {}
+_user_themes_signature = repr([])
 
 # --- Couleurs par élément ---------------------------------------------------
 # Clés de config ui.colors : « mute » (toute la console), « mute@2 » (canal 3
@@ -205,6 +206,14 @@ def configure(ui_cfg: dict) -> bool:
     global ORIENTATION, ANIMATIONS, USER_FONT, _user_colors
     before = (FONT_FAMILY, FADER_STYLE, VU_STYLE, COLORS, INTERFACE.key, KEEP_COLORS, DENSITY,
               ORIENTATION, ANIMATIONS)
+    global _user_themes_signature
+    themes = user_themes(ui_cfg)
+    signature = repr(themes)          # thèmes appliqués à la console (pas seulement enregistrés)
+    _user_themes_changed = signature != _user_themes_signature
+    if _user_themes_changed or [p.key for p in PRESETS.values()
+                                if p.category == USER_CATEGORY] != [t["key"] for t in themes]:
+        register_user_themes(themes)
+    _user_themes_signature = signature
     USER_FONT = str(ui_cfg.get("font_family") or DEFAULT_FONT).strip() or DEFAULT_FONT
     fader = ui_cfg.get("fader_style")
     FADER_STYLE = fader if fader in FADER_STYLES else DEFAULT_FADER_STYLE
@@ -222,8 +231,9 @@ def configure(ui_cfg: dict) -> bool:
     FONT_FAMILY = INTERFACE.font if INTERFACE.font and USER_FONT == DEFAULT_FONT else USER_FONT
     _user_colors = _valid_colors(ui_cfg.get("colors"))
     COLORS = _user_colors if uses_theme_colors() else {}
-    return before != (FONT_FAMILY, FADER_STYLE, VU_STYLE, COLORS, INTERFACE.key, KEEP_COLORS,
-                      DENSITY, ORIENTATION, ANIMATIONS)
+    return _user_themes_changed or before != (FONT_FAMILY, FADER_STYLE, VU_STYLE, COLORS,
+                                              INTERFACE.key, KEEP_COLORS, DENSITY, ORIENTATION,
+                                              ANIMATIONS)
 
 
 def uses_theme_colors(iface: Interface | None = None, keep: bool | None = None) -> bool:
@@ -630,7 +640,9 @@ class Preset:
 
 _CHANNEL_COLORS = ("#22c55e", "#f59e0b", "#5865f2", "#06b6d4", "#ec4899", "#a855f7")
 # Catégories des thèmes prédéfinis, dans l'ordre d'affichage des réglages
-PRESET_CATEGORIES = ("Sobres", "Néon & rétro", "Chauds", "Froids", "Nature", "Pastel",
+USER_CATEGORY = "Mes thèmes"         # thèmes créés avec l'éditeur (config ui.custom_themes)
+USER_PREFIX = "user-"
+PRESET_CATEGORIES = (USER_CATEGORY, "Sobres", "Néon & rétro", "Chauds", "Froids", "Nature", "Pastel",
                      "Éditeurs de code", "Clairs")
 
 
@@ -791,6 +803,119 @@ PRESETS: dict[str, Preset] = {preset.key: preset for preset in (
 )}
 
 
+_BUILTIN_PALETTES = dict(PALETTES)
+_BUILTIN_PRESETS = dict(PRESETS)
+THEME_FILE_FORMAT = 1
+THEME_FILE_SUFFIX = ".rekatheme"
+MAX_USER_THEMES = 100
+
+
+# --- Thèmes de l'utilisateur (éditeur de thèmes) --------------------------------
+def _color_or_none(value) -> str | None:
+    c = QColor(value) if isinstance(value, str) and value.startswith("#") else QColor()
+    return c.name() if c.isValid() else None
+
+
+def clean_user_theme(raw, key: str | None = None) -> dict | None:
+    """Thème de l'utilisateur vérifié et normalisé (None s'il est inutilisable) :
+    {key, name, description, base: [fenêtre, panneaux, accent, texte], colors,
+    fader_style, vu_style}."""
+    if not isinstance(raw, dict):
+        return None
+    base = raw.get("base")
+    if not isinstance(base, (list, tuple)) or len(base) != 4:
+        return None
+    base = [_color_or_none(c) for c in base]
+    if None in base:
+        return None
+    name = str(raw.get("name") or "").strip()[:40] or "Mon thème"
+    elements = set(STRIP_ELEMENTS) | set(MASTER_ELEMENTS)
+    colors = {k: v for k, v in _valid_colors(raw.get("colors")).items()
+              if k.split("@")[0] in elements}
+    fader = raw.get("fader_style") if raw.get("fader_style") in FADER_STYLES else DEFAULT_FADER_STYLE
+    vu = raw.get("vu_style") if raw.get("vu_style") in VU_STYLES else DEFAULT_VU_STYLE
+    key = key or str(raw.get("key") or "")
+    if not key.startswith(USER_PREFIX):
+        key = USER_PREFIX + "theme"
+    return {"key": key, "name": name, "description": str(raw.get("description") or "")[:120],
+            "base": base, "colors": colors, "fader_style": fader, "vu_style": vu}
+
+
+def user_theme_key(name: str, taken) -> str:
+    """Clé libre pour un nouveau thème : « user-mon-theme », « user-mon-theme-2 »…"""
+    import re
+    import unicodedata
+
+    slug = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode().lower()
+    slug = re.sub(r"[^a-z0-9]+", "-", slug).strip("-")[:30] or "theme"
+    key, n = USER_PREFIX + slug, 2
+    while key in taken:
+        key, n = f"{USER_PREFIX}{slug}-{n}", n + 1
+    return key
+
+
+def user_themes(ui_cfg: dict) -> list[dict]:
+    """Thèmes de l'utilisateur de la config `ui`, vérifiés, sans doublon de clé."""
+    out, seen = [], set()
+    for raw in (ui_cfg.get("custom_themes") or [])[:MAX_USER_THEMES]:
+        theme = clean_user_theme(raw)
+        if theme is not None and theme["key"] not in seen:
+            seen.add(theme["key"])
+            out.append(theme)
+    return out
+
+
+def register_user_themes(themes: list[dict]) -> None:
+    """Ajoute les thèmes de l'utilisateur aux palettes et aux thèmes prédéfinis
+    (catégorie « Mes thèmes »), à la place des précédents."""
+    PALETTES.clear()
+    PALETTES.update(_BUILTIN_PALETTES)
+    PRESETS.clear()
+    for theme in themes:
+        PALETTES[theme["key"]] = (theme["name"], build_palette(*theme["base"]))
+        PRESETS[theme["key"]] = Preset(theme["key"], theme["name"],
+                                       theme["description"] or "Créé avec l'éditeur de thèmes.",
+                                       theme["key"], dict(theme["colors"]), theme["fader_style"],
+                                       theme["vu_style"], category=USER_CATEGORY)
+    PRESETS.update(_BUILTIN_PRESETS)
+
+
+def theme_base(theme: str | None) -> list[str]:
+    """Les 4 couleurs de base d'un thème (fenêtre, panneaux, accent, texte) :
+    point de départ de l'éditeur."""
+    values = theme_palette(theme)[1]
+    return [values["BG_WINDOW"], values["BG_COLUMN"], values["GREEN_NEON"], values["TEXT_PRIMARY"]]
+
+
+def export_theme(theme: dict) -> bytes:
+    """Fichier .rekatheme (JSON) d'un thème de l'utilisateur."""
+    import json
+
+    data = {k: theme[k] for k in ("name", "description", "base", "colors", "fader_style", "vu_style")}
+    return json.dumps({"format": THEME_FILE_FORMAT, "app": config.APP_NAME, "theme": data},
+                      ensure_ascii=False, indent=2).encode("utf-8")
+
+
+def import_theme(data: bytes) -> dict:
+    """Thème lu dans un fichier .rekatheme ; ValueError s'il est illisible."""
+    import json
+
+    if len(data) > 256 * 1024:
+        raise ValueError("fichier trop gros pour un thème")
+    try:
+        doc = json.loads(data.decode("utf-8-sig"))
+    except (UnicodeDecodeError, ValueError) as exc:
+        raise ValueError("ce n'est pas un thème REKA") from exc
+    if not isinstance(doc, dict) or not isinstance(doc.get("theme"), dict):
+        raise ValueError("ce n'est pas un thème REKA")
+    if int(doc.get("format", 0) or 0) > THEME_FILE_FORMAT:
+        raise ValueError("thème créé par une version plus récente de REKA")
+    theme = clean_user_theme(doc["theme"], key=USER_PREFIX + "import")
+    if theme is None:
+        raise ValueError("couleurs du thème manquantes ou invalides")
+    return theme
+
+
 def presets_by_category() -> list[tuple[str, list[Preset]]]:
     """Thèmes prédéfinis rangés par catégorie, dans l'ordre d'affichage."""
     groups = [(category, [preset for preset in PRESETS.values() if preset.category == category])
@@ -830,6 +955,7 @@ def current_theme() -> str:
 
 # État de l'apparence, sauvegardé le temps d'un aperçu (previewing)
 _LOOK_STATE = (*_THEMED, *_DERIVED, "FONT_FAMILY", "FADER_STYLE", "VU_STYLE", "COLORS",
+               "_user_themes_signature",
                "INTERFACE", "KEEP_COLORS", "DENSITY", "ORIENTATION", "ANIMATIONS", "USER_FONT",
                "_user_colors", "_current_theme", "_panel_opacity")
 
@@ -841,6 +967,7 @@ def previewing(ui_cfg: dict, interface_key: str | None = None, keep_colors: bool
     aperçus : un widget dessiné et capturé dans le bloc a le look demandé
     (lui donner aussi build_stylesheet() comme feuille de style)."""
     saved = {name: globals()[name] for name in _LOOK_STATE}
+    saved_palettes, saved_presets = dict(PALETTES), dict(PRESETS)
     try:
         cfg = dict(ui_cfg)
         if interface_key is not None:
@@ -852,6 +979,10 @@ def previewing(ui_cfg: dict, interface_key: str | None = None, keep_colors: bool
         yield
     finally:
         globals().update(saved)
+        PALETTES.clear()
+        PALETTES.update(saved_palettes)
+        PRESETS.clear()
+        PRESETS.update(saved_presets)
 
 
 def _rgba(value: str, alpha: float) -> str:

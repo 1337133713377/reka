@@ -207,6 +207,16 @@ def test_real_host_processes_voicemeeter_audio(qapp, cfg, tmp_path):
         # Plugin coupé depuis REKA : le son repasse tel quel
         host.set_fx_enabled(0, 0, False)
         assert _wait(qapp, lambda: abs(_read_output(out).get(0, -9) - 0.01) < 1e-5, 20)
+
+        # Analyseur de spectre : une liste de 24 bandes par strip, rien sans demande
+        spectra = []
+        host.spectrum_changed.connect(spectra.append)
+        host.set_spectrum(True)
+        assert _wait(qapp, lambda: len(spectra) >= 3, 20)
+        last = spectra[-1]
+        assert len(last) == len(host.strip_tracks)
+        assert all(b is not None and len(b) == 24 and all(-90 <= v <= 0 for v in b) for b in last)
+        host.set_spectrum(False)
     finally:
         host.close(save_project=False)
 

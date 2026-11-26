@@ -31,6 +31,7 @@ from ui.fader import Fader, format_db
 from ui.fx_pill import PILL_HEIGHT, FxPill, decode_fx
 from ui.intellipan import PAD_HEIGHT, IntelliPad
 from ui.knob import Knob
+from ui.spectrum import SPECTRUM_HEIGHT, SpectrumView
 from ui.vu_meter import ClipLed, VuMeter
 
 STRIP_WIDTH = 133
@@ -56,6 +57,8 @@ ROW_HEADER_WIDTH = 100                # nom, Muet, Apps
 ROW_FX_WIDTH = 180
 ROW_ROUTING_WIDTH = 96
 ROW_PAD_WIDTH = 128
+ROW_SPECTRUM_WIDTH = 150
+SPECTRUM_SECTION_HEIGHT = SPECTRUM_HEIGHT + 8
 
 
 def unfix(widget: QWidget, width: int | None = None, height: int | None = None) -> None:
@@ -511,6 +514,16 @@ class StripWidget(QFrame):
             self.apps = AppsButton(self)
             self.apps.clicked.connect(lambda: self.appsRequested.emit(self.index))
 
+        # Analyseur de spectre (moteur REKA) : affiché sur demande (show_spectrum)
+        self.spectrum_section = make_section()
+        self.spectrum_section.setParent(self)
+        spectrum_box = QVBoxLayout(self.spectrum_section)
+        spectrum_box.setContentsMargins(4, 4, 4, 4)
+        self.spectrum = SpectrumView()
+        spectrum_box.addWidget(self.spectrum)
+        self.spectrum_section.hide()
+        self._spectrum_on = False
+
         self.fader_section = make_section()
         self.fader_section.setParent(self)
         self.clip = ClipLed(self.fader_section)
@@ -531,7 +544,8 @@ class StripWidget(QFrame):
         self.set_layout(styles.ORIENTATION, styles.DENSITY)
 
         # Couleurs personnalisées : chaque élément dessiné connaît son canal
-        for widget in (self.fader, self.vu, self.fx_badge, self.fx_list, self.pad, self.apps):
+        for widget in (self.fader, self.vu, self.fx_badge, self.fx_list, self.pad, self.apps,
+                       self.spectrum):
             if widget is not None:
                 widget.color_scope = index
         for route, knob in enumerate(self.knobs):
@@ -642,7 +656,7 @@ class StripWidget(QFrame):
                                         interfaces.DEFAULT_ORIENTATION)
         density = interfaces.choice(density, interfaces.DENSITIES, interfaces.DEFAULT_DENSITY)
         self.fx_title.setVisible(styles.INTERFACE.titles)
-        key = (orientation, density, styles.INTERFACE.decor, styles.INTERFACE.big)
+        key = (orientation, density, styles.INTERFACE.decor, styles.INTERFACE.big, self._spectrum_on)
         if key == self._layout_key:
             return
         self._layout_key = key
@@ -657,6 +671,22 @@ class StripWidget(QFrame):
             self._arrange_column(factor, STRIP_WIDTHS[density])
         self.updateGeometry()
         self.update()
+
+    def show_spectrum(self, on: bool) -> None:
+        """Affiche (ou cache) l'analyseur de spectre de la strip."""
+        if on == self._spectrum_on:
+            return
+        self._spectrum_on = on
+        self.spectrum_section.setVisible(on)
+        if not on:
+            self.spectrum.reset()
+        if self._layout_key is not None:
+            orientation, density = self._layout_key[0], self._layout_key[1]
+            self._layout_key = None
+            self.set_layout(orientation, density)
+
+    def spectrum_shown(self) -> bool:
+        return self._spectrum_on
 
     def _apply_target_sizes(self, big: bool) -> None:
         """Taille des cibles : normale, ou agrandie pour le tactile."""
@@ -691,6 +721,9 @@ class StripWidget(QFrame):
         layout.addWidget(self.fx_section)
         layout.addWidget(self.routing_section)
         layout.addWidget(self.pad_section)
+        if self._spectrum_on:
+            unfix(self.spectrum_section, height=SPECTRUM_SECTION_HEIGHT)
+            layout.addWidget(self.spectrum_section)
         if self.apps is not None:
             row = QHBoxLayout()
             row.setSpacing(4)
@@ -753,6 +786,9 @@ class StripWidget(QFrame):
         layout.addWidget(self.fx_section)
         layout.addWidget(self.routing_section)
         layout.addWidget(self.pad_section, 0, Qt.AlignmentFlag.AlignVCenter)
+        if self._spectrum_on:
+            unfix(self.spectrum_section, width=ROW_SPECTRUM_WIDTH, height=self._routing_height)
+            layout.addWidget(self.spectrum_section)
         layout.addWidget(self.fader_section, 1)
 
         self.fader.setOrientation(Qt.Orientation.Horizontal)

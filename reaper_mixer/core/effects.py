@@ -90,6 +90,35 @@ def samples_to_ms(samples: int, samplerate: float) -> float:
     return 1000.0 * samples / samplerate if samplerate > 0 else 0.0
 
 
+# Analyseur de spectre (moteur REKA intégré) : bandes logarithmiques en dB
+SPECTRUM_BANDS = 24
+SPECTRUM_FLOOR_DB = -90.0
+SPECTRUM_LOW_HZ, SPECTRUM_HIGH_HZ = 30.0, 16000.0
+
+
+def spectrum_band_hz(band: int, count: int = SPECTRUM_BANDS) -> float:
+    """Fréquence centrale d'une bande (Hz), comme l'hôte (native/reka-host/src/spectrum.h)."""
+    ratio = SPECTRUM_HIGH_HZ / SPECTRUM_LOW_HZ
+    return SPECTRUM_LOW_HZ * ratio ** ((band + 0.5) / count)
+
+
+def parse_spectrum(value, count: int) -> list[list[float] | None]:
+    """Bandes reçues du moteur : une liste par strip (None : strip muette)."""
+    out: list[list[float] | None] = []
+    for item in (value if isinstance(value, list) else [])[:count]:
+        if not isinstance(item, list) or not item:
+            out.append(None)
+            continue
+        bands = []
+        for db in item[:64]:
+            try:
+                bands.append(max(SPECTRUM_FLOOR_DB, min(0.0, float(db))))
+            except (TypeError, ValueError):
+                bands.append(SPECTRUM_FLOOR_DB)
+        out.append(bands)
+    return out + [None] * (count - len(out))
+
+
 class EffectsHost(QObject):
     """Interface commune des moteurs d'effets (et comportement par défaut :
     aucun effet). Les signaux sont émis dans le thread de l'interface ou
@@ -101,6 +130,7 @@ class EffectsHost(QObject):
     project_changed = Signal(str)         # projet ouvert (REAPER seulement)
     installed_fx_ready = Signal(object)   # list[(nom, ident)] ou None
     command_failed = Signal(str)
+    spectrum_changed = Signal(object)     # list[list[dB] | None] : bandes de chaque strip
 
     kind = HOST_NONE
     process_key: str | None = None        # processus géré par ProcessManager
@@ -108,6 +138,7 @@ class EffectsHost(QObject):
     can_move_fx = False                   # plugins déplaçables d'une strip à l'autre
     has_projects = False                  # projets ouvrables depuis REKA (REAPER)
     has_audio_device = False              # carte son lisible (REAPER)
+    has_spectrum = False                  # analyseur de spectre des strips (moteur REKA)
     add_label = "+ Ajouter un effet"      # texte de l'emplacement libre au survol
     empty_hint = ""                       # texte d'une strip sans effet
 
@@ -163,6 +194,9 @@ class EffectsHost(QObject):
     def strip_latency_ms(self, strip: int) -> float | None:
         """Latence des plugins actifs d'une strip en ms, si le moteur la connaît."""
         return None
+
+    def set_spectrum(self, on: bool) -> None:
+        """Analyseur de spectre allumé ou éteint (sans effet si le moteur n'en a pas)."""
 
     def fx_latency_ms(self, strip: int, fx_index: int) -> float | None:
         """Latence propre d'un plugin en ms, si le moteur la connaît."""

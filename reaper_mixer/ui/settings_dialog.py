@@ -274,6 +274,7 @@ class SettingsDialog(QDialog):
     exportRequested = Signal(str)    # « Exporter… » : fichier .reka à écrire
     importRequested = Signal(object) # « Importer… » : sauvegarde lue et confirmée (Backup)
     listenChanged = Signal()         # écoute au casque (EQ, surround) modifiée
+    wizardRequested = Signal()       # « Assistant de premiers réglages »
 
     BUFFER_CHOICES = ((0, "Ne pas modifier"), (512, "Standard — 512 échantillons"),
                       (256, "Réduit — 256 échantillons"), (128, "Minimal — 128 échantillons (PC puissant)"))
@@ -320,6 +321,7 @@ class SettingsDialog(QDialog):
         general = [self._engines_group(), self._backup_group()]
         if self._running_host == HOST_REAPER:
             general.insert(0, self._project_group())
+        general.append(self._wizard_group())
         self.tabs.addTab(self._tab(*general), "Général")
         self.tabs.addTab(self._tab(self._names_group()), "Canaux")
         audio = {HOST_REAPER: self._reaper_group, HOST_FLSTUDIO: self._flstudio_group,
@@ -447,6 +449,15 @@ class SettingsDialog(QDialog):
                                       "Dossier « config » détecté automatiquement")
         form.addRow(_hint("Laisse vide pour la détection automatique. "
                           "Pris en compte au prochain démarrage."))
+        return group
+
+    def _wizard_group(self) -> QGroupBox:
+        group = QGroupBox("Assistant")
+        box = QVBoxLayout(group)
+        button = QPushButton("Relancer l'assistant de premiers réglages…")
+        button.clicked.connect(self.wizardRequested)
+        box.addWidget(button)
+        box.addWidget(_hint("Micro, casque, noms des canaux, Discord et style, en six étapes."))
         return group
 
     def _backup_group(self) -> QGroupBox:
@@ -792,6 +803,15 @@ class SettingsDialog(QDialog):
             interfaces.choice(ui_cfg.get("animations"), interfaces.ANIMATIONS,
                               interfaces.DEFAULT_ANIMATIONS), "animations")
         form.addRow("Animations", self.animations_choice)
+        self.spectrum_box = QCheckBox("Analyseur de spectre sur chaque strip")
+        self.spectrum_box.setChecked(bool(ui_cfg.get("spectrum", False)))
+        self.spectrum_box.toggled.connect(lambda on: self._set_ui("spectrum", on))
+        has_spectrum = bool(getattr(self._reaper, "has_spectrum", False))
+        self.spectrum_box.setEnabled(has_spectrum)
+        form.addRow("Spectre", self.spectrum_box)
+        if not has_spectrum:
+            form.addRow(_hint("L'analyseur de spectre lit le son dans le moteur d'effets REKA "
+                              "(intégré) : choisis-le dans Général → Effets pour l'activer."))
         form.addRow(_hint("Compacte resserre les marges ; aérée laisse respirer. Horizontale range "
                           "chaque canal sur une ligne, fader et VU couchés. Animations : pulsation "
                           "du badge, fondu des messages, knob du casque, égaliseur du Lecteur 2000."))
@@ -883,17 +903,13 @@ class SettingsDialog(QDialog):
 
     # ---------------------------------------------------------- Apparence
     def _presets_group(self) -> QGroupBox:
-        group = QGroupBox(f"Thèmes prédéfinis ({len(styles.PRESETS)})")
-        box = QVBoxLayout(group)
+        self.presets_group = QGroupBox()
+        box = QVBoxLayout(self.presets_group)
         self.preset_label = _hint("")
         box.addWidget(self.preset_label)
         row = QHBoxLayout()
         row.addWidget(QLabel("Afficher"))
         self.preset_filter = QComboBox()
-        self.preset_filter.addItem("Toutes les catégories", None)
-        groups = styles.presets_by_category()
-        for category, presets in groups:
-            self.preset_filter.addItem(f"{category} ({len(presets)})", category)
         self.preset_filter.currentIndexChanged.connect(lambda _i: self._filter_presets())
         row.addWidget(self.preset_filter, 1)
         surprise = QPushButton("Thème au hasard")
@@ -902,14 +918,56 @@ class SettingsDialog(QDialog):
         row.addWidget(surprise)
         box.addLayout(row)
 
+        # Mes thèmes : éditeur de thèmes, fichiers .rekatheme
+        actions = QHBoxLayout()
+        create = QPushButton("Créer un thème…")
+        create.setObjectName("primary")
+        create.clicked.connect(lambda: self.create_theme())
+        actions.addWidget(create)
+        self.edit_theme_button = QPushButton("Modifier")
+        self.edit_theme_button.clicked.connect(lambda: self.edit_theme(self._current_user_theme()))
+        actions.addWidget(self.edit_theme_button)
+        self.export_theme_button = QPushButton("Exporter…")
+        self.export_theme_button.clicked.connect(self._export_theme)
+        actions.addWidget(self.export_theme_button)
+        importer = QPushButton("Importer…")
+        importer.clicked.connect(self._import_theme)
+        actions.addWidget(importer)
+        self.delete_theme_button = QPushButton("Supprimer")
+        self.delete_theme_button.clicked.connect(lambda: self.delete_theme(self._current_user_theme()))
+        actions.addWidget(self.delete_theme_button)
+        actions.addStretch(1)
+        box.addLayout(actions)
+
+        self._presets_box = box
+        self._preset_holder: QWidget | None = None
+        self._build_preset_sections()
+        return self.presets_group
+
+    def _build_preset_sections(self) -> None:
+        """Cartes des thèmes, rangées par catégorie (refaites quand « Mes thèmes » change)."""
+        groups = styles.presets_by_category()
+        self.presets_group.setTitle(f"Thèmes prédéfinis ({len(styles.PRESETS)})")
+        chosen = self.preset_filter.currentData()
+        self.preset_filter.blockSignals(True)
+        self.preset_filter.clear()
+        self.preset_filter.addItem("Toutes les catégories", None)
+        for category, presets in groups:
+            self.preset_filter.addItem(f"{category} ({len(presets)})", category)
+        self.preset_filter.setCurrentIndex(max(0, self.preset_filter.findData(chosen)))
+        self.preset_filter.blockSignals(False)
+
+        holder = QWidget()
+        box = QVBoxLayout(holder)
+        box.setContentsMargins(0, 0, 0, 0)
         self.preset_cards: dict[str, PresetCard] = {}
         self.preset_sections: dict[str, tuple[QLabel, QWidget]] = {}
         for category, presets in groups:
             header = QLabel(category)
             header.setObjectName("sectionTitle")
             box.addWidget(header)
-            holder = QWidget()
-            grid = QGridLayout(holder)
+            section = QWidget()
+            grid = QGridLayout(section)
             grid.setContentsMargins(0, 0, 0, 4)
             grid.setSpacing(8)
             for n, preset in enumerate(presets):
@@ -919,9 +977,119 @@ class SettingsDialog(QDialog):
                 grid.addWidget(card, n // PRESET_COLUMNS, n % PRESET_COLUMNS)
             for column in range(PRESET_COLUMNS):     # cartes de même largeur d'une catégorie à l'autre
                 grid.setColumnStretch(column, 1)
-            box.addWidget(holder)
-            self.preset_sections[category] = (header, holder)
-        return group
+            box.addWidget(section)
+            self.preset_sections[category] = (header, section)
+        if self._preset_holder is not None:
+            self._presets_box.removeWidget(self._preset_holder)
+            self._preset_holder.deleteLater()
+        self._preset_holder = holder
+        self._presets_box.addWidget(holder)
+        self._filter_presets()
+        self._show_preset()
+
+    # ------------------------------------------------------------ Mes thèmes
+    def _user_themes(self) -> list[dict]:
+        return styles.user_themes(self._cfg.get("ui", {}))
+
+    def _current_user_theme(self) -> str | None:
+        current = styles.current_preset(self._cfg.get("ui", {}))
+        return current if current and current.startswith(styles.USER_PREFIX) else None
+
+    def _save_user_themes(self, themes: list[dict], apply: str | None = None) -> None:
+        """Enregistre « Mes thèmes », refait les cartes et applique `apply` s'il est donné."""
+        ui_cfg = self._cfg.setdefault("ui", {})
+        ui_cfg["custom_themes"] = [{k: t[k] for k in ("key", "name", "description", "base", "colors",
+                                                       "fader_style", "vu_style")} for t in themes]
+        styles.register_user_themes(styles.user_themes(ui_cfg))
+        self._build_preset_sections()
+        if apply is not None:
+            self.apply_preset(apply, confirm=False)
+        else:
+            self.appearanceChanged.emit()
+            self._show_preset()
+
+    def create_theme(self, editor_hook=None) -> str | None:
+        """Éditeur de thèmes pour un nouveau thème ; renvoie sa clé s'il est enregistré."""
+        from ui.theme_editor import ThemeEditor
+
+        editor = ThemeEditor(self._cfg, None, self)
+        if editor_hook is not None:
+            editor_hook(editor)
+        elif not editor.exec():
+            return None
+        theme = editor.result_theme()
+        self._save_user_themes(self._user_themes() + [theme], apply=theme["key"])
+        return theme["key"]
+
+    def edit_theme(self, key: str | None, editor_hook=None) -> bool:
+        from ui.theme_editor import ThemeEditor
+
+        themes = self._user_themes()
+        theme = next((t for t in themes if t["key"] == key), None)
+        if theme is None:
+            return False
+        editor = ThemeEditor(self._cfg, theme, self)
+        if editor_hook is not None:
+            editor_hook(editor)
+        elif not editor.exec():
+            return False
+        edited = editor.result_theme()
+        self._save_user_themes([edited if t["key"] == key else t for t in themes], apply=key)
+        return True
+
+    def delete_theme(self, key: str | None, confirm: bool = True) -> bool:
+        themes = self._user_themes()
+        theme = next((t for t in themes if t["key"] == key), None)
+        if theme is None:
+            return False
+        if confirm and QMessageBox.question(
+                self, "Supprimer le thème", f"Supprimer le thème « {theme['name']} » ?"
+        ) != QMessageBox.StandardButton.Yes:
+            return False
+        current = self._cfg.get("ui", {}).get("theme") == key
+        self._save_user_themes([t for t in themes if t["key"] != key],
+                               apply=styles.DEFAULT_THEME if current else None)
+        return True
+
+    def export_theme_file(self, key: str, path: str) -> bool:
+        theme = next((t for t in self._user_themes() if t["key"] == key), None)
+        if theme is None:
+            return False
+        try:
+            Path(path).write_bytes(styles.export_theme(theme))
+        except OSError as exc:
+            QMessageBox.warning(self, "Exporter le thème", f"Fichier non écrit :\n{exc}")
+            return False
+        return True
+
+    def import_theme_file(self, path: str) -> str | None:
+        """Ajoute le thème d'un fichier .rekatheme à « Mes thèmes » et l'applique."""
+        try:
+            theme = styles.import_theme(Path(path).read_bytes())
+        except (OSError, ValueError) as exc:
+            QMessageBox.warning(self, "Importer un thème", f"Thème non importé : {exc}")
+            return None
+        themes = self._user_themes()
+        theme["key"] = styles.user_theme_key(theme["name"], {t["key"] for t in themes})
+        self._save_user_themes(themes + [theme], apply=theme["key"])
+        return theme["key"]
+
+    def _export_theme(self) -> None:
+        key = self._current_user_theme()
+        theme = next((t for t in self._user_themes() if t["key"] == key), None)
+        if theme is None:
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Exporter le thème", str(Path.home() / f"{theme['name']}{styles.THEME_FILE_SUFFIX}"),
+            f"Thème REKA (*{styles.THEME_FILE_SUFFIX})")
+        if path:
+            self.export_theme_file(key, path)
+
+    def _import_theme(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(self, "Importer un thème", str(Path.home()),
+                                              f"Thème REKA (*{styles.THEME_FILE_SUFFIX})")
+        if path:
+            self.import_theme_file(path)
 
     def _filter_presets(self) -> None:
         """Seulement les thèmes de la catégorie choisie (ou tous)."""
@@ -973,6 +1141,10 @@ class SettingsDialog(QDialog):
     def _show_preset(self) -> None:
         if not hasattr(self, "preset_cards"):
             return
+        mine = self._current_user_theme() is not None
+        for button in (self.edit_theme_button, self.export_theme_button, self.delete_theme_button):
+            button.setEnabled(mine)
+            button.setToolTip("" if mine else "Applique d'abord un de tes thèmes (Mes thèmes)")
         current = styles.current_preset(self._cfg.get("ui", {}))
         for key, card in self.preset_cards.items():
             card.setChecked(key == current)

@@ -95,6 +95,7 @@
     "orientation": "vertical",
     "density": "normale",
     "animations": "on",
+    "spectrum": false,
     "pad_modes": [],
     "colors": {},
     "strip_names": ["Microphone", "Musique", "Appels", "Bureau", "Autres 1", "Autres 2"]

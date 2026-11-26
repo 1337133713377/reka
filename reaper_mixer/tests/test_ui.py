@@ -888,3 +888,103 @@ def test_media_player_hidden_without_backend(qapp, cfg):
         assert window.master.media.isHidden()
     finally:
         window.close()
+
+
+# ------------------------------------------------------------ assistant de premiers réglages
+def test_first_run_wizard(qapp, mixer):
+    from ui import styles
+    from ui.wizard import STEPS, FirstRunWizard
+
+    window, vm, reaper = mixer
+    cfg = window._cfg
+    renamed, discord = [], []
+    wizard = FirstRunWizard(cfg, vm, reaper, window)
+    wizard.appearanceChanged.connect(window.apply_appearance)
+    wizard.stripRenamed.connect(window.rename_strip)
+    wizard.stripRenamed.connect(lambda i, n: renamed.append((i, n)))
+    wizard.discordChanged.connect(lambda: discord.append(True))
+    try:
+        wizard.show()
+        pump(qapp, 0.3)
+        assert wizard.pages.count() == len(STEPS) == 6
+        assert not wizard.back_button.isEnabled() and wizard.next_button.text() == "Suivant"
+
+        wizard.next()                                       # Micro : périphériques de la démo
+        assert wizard.mic_combo.count() > 1 and wizard.mic_combo.itemData(0)
+        chosen = wizard.mic_combo.itemData(1)
+        wizard._choose_mic(1)
+        pump(qapp, 0.1)
+        assert vm._strip_devices[0] == chosen[1]            # Voicemeeter a reçu le choix
+        assert wizard.mic_combo.currentData() == chosen     # liste relue, choix affiché
+        vm.set_mute(0, False)                               # niveaux : le VU du micro bouge
+        vm._tick()
+        assert wizard.mic_level() > -60
+        vm.set_mute(0, True)
+
+        wizard.next()                                       # Casque
+        assert wizard.headphone_combo.count() >= 1
+        wizard._choose_headphone(wizard.headphone_combo.count() - 1)
+        assert vm._bus_devices["A1"] == wizard.headphone_combo.currentData()[1]
+        wizard.listen_box.setChecked(True)
+
+        wizard.next()                                       # Canaux
+        wizard.name_edits[1].setText("Spotify")
+
+        wizard.next()                                       # Discord
+        wizard.presence_box.setChecked(False)
+        assert cfg["discord"]["rich_presence"] is False and discord
+
+        wizard.next()                                       # Style : la console change en direct
+        assert wizard.next_button.text() == "Terminer" and not wizard.skip_button.isVisible()
+        wizard.interface_combo.setCurrentIndex(wizard.interface_combo.findData("terminal"))
+        assert styles.INTERFACE.key == "terminal"
+        wizard.theme_combo.setCurrentIndex(wizard.theme_combo.findData("dracula"))
+        assert cfg["ui"]["theme"] == "dracula"
+        window.grab()
+
+        wizard.finish()
+        assert cfg["wizard_done"] is True and wizard.open_listen
+        assert (1, "Spotify") in renamed and window.strips[1].strip_name() == "Spotify"
+    finally:
+        for key in ("interface", "orientation", "density", "theme", "colors", "fader_style",
+                    "vu_style"):
+            cfg["ui"].pop(key, None)
+        cfg["discord"]["rich_presence"] = True
+        window.apply_appearance()
+
+
+def test_wizard_opens_once_after_first_run(qapp, mixer, monkeypatch):
+    from PySide6.QtCore import QTimer
+
+    from ui.settings_dialog import SettingsDialog
+    from ui.wizard import FirstRunWizard
+
+    window, vm, reaper = mixer
+    opened = []
+    monkeypatch.setattr(FirstRunWizard, "exec", lambda self: opened.append(self) or 0)
+    window._cfg.pop("wizard_done", None)
+    window.maybe_open_wizard()                              # config existante : rien
+    pump(qapp, 0.6)
+    assert not opened
+    window._cfg["wizard_done"] = False                      # premier lancement
+    window.maybe_open_wizard()
+    pump(qapp, 0.6)
+    assert len(opened) == 1 and window._cfg["wizard_done"] is True   # fermé : plus reproposé
+
+    # Depuis les réglages (Général) : ouvert après leur fermeture. Le clic attend que
+    # les réglages soient affichés (sinon la boucle modale ne finirait jamais)
+    poll = QTimer()
+    poll.setInterval(50)
+
+    def request() -> None:
+        dialog = next((w for w in qapp.topLevelWidgets()
+                       if isinstance(w, SettingsDialog) and w.isVisible()), None)
+        if dialog is not None:
+            poll.stop()
+            dialog.wizardRequested.emit()
+
+    poll.timeout.connect(request)
+    poll.start()
+    window.open_settings()
+    poll.stop()
+    assert len(opened) == 2

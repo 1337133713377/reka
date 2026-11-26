@@ -3,7 +3,11 @@
 // Lancé par REKA (core/reka_host.py) avec --port et --token : il se connecte à
 // REKA en TCP sur 127.0.0.1, se présente, puis reçoit une commande JSON par
 // ligne (setup, load, add_fx, remove_fx, move_fx, fx_enabled, chain_enabled,
-// toggle_ui, rename, listen, get_chains, quit) et renvoie l'état de ses chaînes.
+// toggle_ui, rename, listen, spectrum, get_chains, quit) et renvoie l'état de ses chaînes.
+//
+// Analyseur de spectre (commande « spectrum ») : le son de chaque strip, après
+// ses effets, alimente une FFT ; une quinzaine de fois par seconde l'hôte envoie
+// {"type": "spectrum", "bands": [[dB…] par strip]} (null : strip muette).
 //
 // Écoute au casque (commande « listen ») : surround virtuel et égalisation du
 // casque, sur le bus du casque (mode « sorties » de l'audio callback). Elle
@@ -46,6 +50,7 @@
 
 #include "listen.h"
 #include "plugin.h"
+#include "spectrum.h"
 #include "voicemeeter.h"
 
 using json = nlohmann::json;
@@ -64,6 +69,7 @@ constexpr UINT WM_APP_AUDIO_RUNNING = WM_APP + 6;
 constexpr UINT_PTR kIdleTimer = 1;
 constexpr UINT_PTR kVoicemeeterTimer = 2;
 constexpr size_t kMaxFxPerStrip = 32;
+constexpr int kSpectrumEvery = 2;   // spectre envoyé un tic sur deux (≈ 16 images/s)
 
 // Champ d'une commande, ou null s'il manque (operator[] sur un json constant
 // n'accepte pas une clé absente)
@@ -88,6 +94,7 @@ struct Strip {
     bool enabled = true;
     std::vector<std::unique_ptr<Slot>> fx;
     std::vector<float> left, right;  // tampons de travail du fil audio
+    std::unique_ptr<SpectrumAnalyzer> spectrum = std::make_unique<SpectrumAnalyzer>();
 };
 
 class Host {
@@ -160,6 +167,9 @@ private:
     std::atomic<double> rate_{0};
     std::atomic<int> block_{0};
     ULONGLONG lastDirty_ = 0;
+    std::atomic<bool> spectrumOn_{false};   // analyseur demandé par REKA
+    int spectrumTick_ = 0;
+    void sendSpectrum();
 
 public:
     static Host* instance;
@@ -320,6 +330,10 @@ void Host::handle(const json& command) {
         }
     } else if (cmd == "listen") {
         cmdListen(arg(command, "listen"));
+    } else if (cmd == "spectrum") {
+        spectrumOn_.store(command.value("on", false));
+        reply(command, true);
+        return;                    // l'état des chaînes ne change pas
     } else if (cmd == "rename") {
         if (Strip* s = strip(arg(command, "strip"))) {
             s->name = command.value("name", s->name);
@@ -729,6 +743,7 @@ void Host::processBuffer(VmAudioBuffer* buffer) {
     if (!running_.load(std::memory_order_relaxed) && !running_.exchange(true))
         PostMessageW(messages_, WM_APP_AUDIO_RUNNING, 0, 0);  // premier bloc : REKA est prévenu
     if (!chainLock_.try_lock()) return;  // chaîne en cours de modification : bloc sans effets
+    const bool analyze = spectrumOn_.load(std::memory_order_relaxed);
     for (Strip& s : strips_) {
         if (!s.enabled || s.fx.empty() || s.channel >= channels) continue;
         if ((int)s.left.size() < n) continue;
@@ -748,7 +763,35 @@ void Host::processBuffer(VmAudioBuffer* buffer) {
             if (right != left) std::memcpy(right, out[1], sizeof(float) * (size_t)n);
         }
     }
+    if (analyze) {                         // spectre de chaque strip, effets compris
+        for (Strip& s : strips_) {
+            if (s.channel >= channels || !s.spectrum) continue;
+            float* left = buffer->audiobuffer_w[s.channel];
+            float* right = (s.channels > 1 && s.channel + 1 < channels)
+                               ? buffer->audiobuffer_w[s.channel + 1]
+                               : left;
+            if (left && right) s.spectrum->push(left, right, n);
+        }
+    }
     chainLock_.unlock();
+}
+
+void Host::sendSpectrum() {
+    // Sans chainLock_ : le fil audio, s'il le trouvait pris, sauterait les effets d'un
+    // bloc. strips_ ne change que sur ce fil (cmdSetup), et le fil audio n'écrit que
+    // dans le tampon circulaire de chaque analyseur.
+    json all = json::array();
+    const double rate = rate_.load();
+    for (Strip& s : strips_) {
+        if (!s.spectrum || s.spectrum->pushed() == 0) {
+            all.push_back(nullptr);
+            continue;
+        }
+        json bands = json::array();
+        for (float db : s.spectrum->bands(rate)) bands.push_back((int)std::lround(db));
+        all.push_back(std::move(bands));
+    }
+    send({{"type", "spectrum"}, {"bands", std::move(all)}});
 }
 
 void Host::processBufferOut(VmAudioBuffer* buffer) {
@@ -787,6 +830,10 @@ void Host::onTimer(UINT_PTR id) {
         send({{"type", "dirty"}});
     }
     if (HostHooks::latencyChanged.exchange(false)) sendState();
+    if (spectrumOn_.load() && running_.load() && ++spectrumTick_ >= kSpectrumEvery) {
+        spectrumTick_ = 0;
+        sendSpectrum();
+    }
 }
 
 LRESULT CALLBACK Host::messageProc(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {

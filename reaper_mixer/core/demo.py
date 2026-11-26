@@ -16,7 +16,8 @@ from pathlib import Path
 
 from PySide6.QtCore import QObject, QTimer, Signal
 
-from core.effects import HOST_REAPER, EffectsHost, samples_to_ms
+from core.effects import (HOST_REAPER, SPECTRUM_BANDS, SPECTRUM_FLOOR_DB, EffectsHost,
+                          samples_to_ms)
 from core.engine_load import EngineLoad
 from core.reaper_ctrl import AudioDevice, FxInfo, TrackInfo, track_latency_samples
 from core.voicemeeter_ctrl import (DEFAULT_ROUTING, SILENCE_DB, AudioEndpoint, DeviceReport,
@@ -43,6 +44,29 @@ DEMO_PLUGINS = [
     ("VST: ReaLimit (Cockos)", ""), ("VST: ReaGate (Cockos)", ""), ("JS: Volume Adjustment", ""),
 ]
 DEMO_LATENCY = {"Pro-MB": 0, "ReaLimit": 120, "Pro-L 2": 240}   # PDC simulée (échantillons)
+SPECTRUM_MS = 60
+# Allure du spectre simulé de chaque strip : (pente, bosse en bande, largeur, niveau)
+_DEMO_SPECTRUM = ((0.9, 7, 3.0, -18), (0.4, 3, 4.0, -12), (1.1, 8, 2.5, -24),
+                  (0.6, 12, 5.0, -20), (0.8, 5, 3.0, -30), (0.5, 15, 4.0, -26))
+
+
+def demo_spectrum(t: float, count: int) -> list[list[float] | None]:
+    """Spectres simulés (démo) : voix, musique, appel… qui bougent dans le temps.
+    La strip 6 (et les suivantes) est muette, comme une entrée sans son."""
+    out: list[list[float] | None] = []
+    for strip in range(count):
+        if strip >= 5:
+            out.append(None)
+            continue
+        slope, bump, width, level = _DEMO_SPECTRUM[strip % len(_DEMO_SPECTRUM)]
+        pulse = 0.5 + 0.5 * math.sin(t * (1.3 + strip * 0.37) + strip)
+        bands = []
+        for b in range(SPECTRUM_BANDS):
+            shape = level - slope * b * 1.6 + 14 * math.exp(-((b - bump) / width) ** 2)
+            wobble = 6 * math.sin(t * (3.1 + b * 0.21) + strip * 1.7 + b) * pulse
+            bands.append(max(SPECTRUM_FLOOR_DB, min(0.0, shape + wobble - (1 - pulse) * 10)))
+        out.append(bands)
+    return out
 
 
 def _demo_latency(name: str) -> int:
@@ -242,6 +266,7 @@ class DemoReaper(EffectsHost):
     can_move_fx = True
     has_projects = True
     has_audio_device = True
+    has_spectrum = True                   # démo : spectres simulés
     # Attributs simples (et non les propriétés de EffectsHost) : modifiables en démo
     device = None
     is_connected = True
@@ -264,7 +289,17 @@ class DemoReaper(EffectsHost):
         self.is_connected = True
         self.version = "démo"
         self.project_path = "Démo.rpp"
+        self._spectrum_timer = QTimer(self)
+        self._spectrum_timer.setInterval(SPECTRUM_MS)
+        self._spectrum_timer.timeout.connect(
+            lambda: self.spectrum_changed.emit(demo_spectrum(time.monotonic(), len(self._tracks))))
         QTimer.singleShot(0, self, self._emit)
+
+    def set_spectrum(self, on: bool) -> None:
+        if on:
+            self._spectrum_timer.start()
+        else:
+            self._spectrum_timer.stop()
 
     @property
     def strip_tracks(self) -> list[TrackInfo | None]:

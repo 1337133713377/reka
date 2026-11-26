@@ -4,6 +4,17 @@ effets, REAPER, FL Studio ou Equalizer APO. REKA se met ensuite à jour toute se
 
 ## Prochaine version
 
+- **Analyseur de spectre sur chaque strip** : le son de chaque entrée, après ses effets, des
+  graves aux aigus, en barres qui retombent doucement. ⚙ → Interface → Spectre. Le moteur
+  d'effets REKA (intégré) calcule le spectre lui-même, sans rien ajouter au son ; il se met en
+  pause quand la fenêtre est réduite.
+- **Assistant de premiers réglages** : au premier lancement, six étapes pour choisir son
+  micro (avec un VU-mètre pour vérifier qu'il capte), son casque, le nom des canaux, Discord
+  et son style. Se relance depuis ⚙ → Général.
+- **Éditeur de thèmes** : ⚙ → Apparence → *Créer un thème…*. Quatre couleurs (fond, panneaux,
+  accent, texte) dont REKA tire toute la palette, la couleur des knobs, du fader, des VU…, le
+  style des faders, avec un aperçu en direct et une alerte si l'accent ou le texte se lisent
+  mal. Tes thèmes rejoignent « Mes thèmes » et s'échangent en fichiers `.rekatheme`.
 - **Styles d'interface** : nouvel onglet ⚙ → Interface. Toute la console change de forme, pas
   seulement de couleur : **Cantabile** (gris plats, angles nets, canaux en lignes façon rack),
   **Lecteur 2000** (métal en relief, afficheurs LCD verts, boutons chromés, égaliseur animé dans

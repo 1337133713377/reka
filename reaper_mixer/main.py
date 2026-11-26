@@ -24,6 +24,7 @@ Options :
   --demo            interface avec des moteurs simulés (sans Voicemeeter ni REAPER)
   --host MOTEUR     en démo : moteur d'effets à simuler (reaper, flstudio, apo, none)
   --setup           ouvre le menu de sélection des moteurs avant de démarrer
+  --wizard          ouvre l'assistant de premiers réglages (micro, casque, canaux, style)
   --selftest IMAGE  rend la console en démo dans IMAGE puis quitte (vérif de build)
 """
 
@@ -417,6 +418,7 @@ class MixerApp:
             return
         self._window.show()
         self._splash.finish(self._window)
+        self._window.maybe_open_wizard()
         # À partir d'ici, fermer la fenêtre principale quitte l'application
         self._qt.setQuitOnLastWindowClosed(True)
 
@@ -682,6 +684,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--demo", action="store_true")
     parser.add_argument("--host", choices=("reaper", "reka", "flstudio", "apo", "none"))
     parser.add_argument("--setup", action="store_true")
+    parser.add_argument("--wizard", action="store_true")   # assistant de premiers réglages
     parser.add_argument("--selftest", metavar="IMAGE")
     parser.add_argument("--restart", action="store_true")  # relance depuis les réglages
     args, _qt_args = parser.parse_known_args(argv[1:])
@@ -730,6 +733,7 @@ def run_demo(app: QApplication, cfg: dict, selftest: str | None, host: str | Non
     if selftest is None:
         app.setQuitOnLastWindowClosed(True)
         window.show()
+        window.maybe_open_wizard()            # démo : avec --wizard
         return app.exec()
     return run_selftest(app, cfg, window, vm, reaper, processes, Path(selftest))
 
@@ -769,7 +773,17 @@ def run_selftest(app: QApplication, cfg: dict, window: MainWindow, vm, reaper, p
     splash = SplashScreen()
     splash.set_status("Lancement de REAPER…")
     splash.show()
+    from ui.wizard import FirstRunWizard
+    wizard = FirstRunWizard(dict(cfg), vm, reaper, window)   # copie : la config n'est pas touchée
+    wizard.go(1)
+    wizard.show()
     pump(0.4)
+    shots[image.with_name(f"{image.stem}_assistant{image.suffix}")] = wizard
+    from ui.theme_editor import ThemeEditor
+    editor = ThemeEditor(dict(cfg), None, window)
+    editor.show()
+    pump(0.3)
+    shots[image.with_name(f"{image.stem}_editeur_theme{image.suffix}")] = editor
     shots[image.with_name(f"{image.stem}_reglages{image.suffix}")] = settings
     shots[image.with_name(f"{image.stem}_vst{image.suffix}")] = vst
     shots[image.with_name(f"{image.stem}_projet{image.suffix}")] = project
@@ -960,6 +974,8 @@ def main() -> int:
     styles.apply_theme(app, float(ui_cfg.get("panel_opacity", 1.0)), ui_cfg.get("theme"))
 
     if args.demo or args.selftest:
+        if args.wizard:
+            cfg["wizard_done"] = False
         return run_demo(app, cfg, args.selftest, args.host)
 
     # Une seule instance : deux consoles se disputeraient Voicemeeter et REAPER.
@@ -986,7 +1002,11 @@ def main() -> int:
         if not dialog.exec():
             lock.unlock()
             return 0
+        if not args.setup:
+            cfg["wizard_done"] = False       # premier lancement : l'assistant suivra
         save_config_quietly(cfg)
+    if args.wizard:
+        cfg["wizard_done"] = False
 
     mixer = MixerApp(app, cfg, log_path)
     server = listen_for_show_requests(mixer.show_window)

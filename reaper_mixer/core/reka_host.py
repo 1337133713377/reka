@@ -52,7 +52,7 @@ from typing import Any, Callable
 from PySide6.QtCore import QObject
 
 from core import config
-from core.effects import HOST_REKA, EffectsHost, samples_to_ms
+from core.effects import HOST_REKA, EffectsHost, parse_spectrum, samples_to_ms
 from core.reaper_ctrl import FxInfo, TrackInfo
 from core.voicemeeter_ctrl import edition, input_channel, strip_map
 from core.vst_scanner import PluginInfo
@@ -419,6 +419,8 @@ class RekaHostController(EffectsHost):
         self._count = len(strips)
         self._listen_only = listen_only   # écoute au casque seulement : pas de chaînes d'effets
         self._listen: dict | None = None  # réglages d'écoute (core/listening.py)
+        self._spectrum = False            # analyseur de spectre demandé
+        self.has_spectrum = not listen_only
         self._launcher = launcher
         self._chains_file = chains_file or chains_path()
         self._doc = empty_chains(0) if listen_only else load_chains_file(self._chains_file,
@@ -602,6 +604,12 @@ class RekaHostController(EffectsHost):
         self._command({"cmd": "move_fx", "src": src_strip, "src_index": src_index,
                        "dst": dst_strip, "dst_index": dst_index, "copy": bool(copy)})
 
+    def set_spectrum(self, on: bool) -> None:
+        on = bool(on) and self.has_spectrum
+        if on != self._spectrum:
+            self._spectrum = on
+            self._send({"cmd": "spectrum", "on": on})
+
     def set_fx_enabled(self, strip: int, fx_index: int, enabled: bool) -> None:
         self._command({"cmd": "fx_enabled", "strip": strip, "index": fx_index,
                        "enabled": bool(enabled)})
@@ -659,7 +667,8 @@ class RekaHostController(EffectsHost):
         sock = self._sock
         if sock is None:
             return False
-        if not self._connected and message.get("cmd") not in ("setup", "load", "listen", "quit"):
+        if not self._connected and message.get("cmd") not in ("setup", "load", "listen", "quit",
+                                                              "spectrum"):
             return False
         with self._send_lock:
             self._seq += 1
@@ -794,6 +803,8 @@ class RekaHostController(EffectsHost):
         if self._listen is not None:
             setup["listen"] = self._listen
         self._send(setup)
+        if self._spectrum:                # après une relance : l'analyseur reste allumé
+            self._send({"cmd": "spectrum", "on": True})
         if not self._listen_only:
             doc = self.chains
             missing = resolve_paths(doc, self.installed_plugins()) if any(
@@ -854,6 +865,9 @@ class RekaHostController(EffectsHost):
             self._chains_event.set()
         elif kind == "dirty":
             self._dirty_at = time.monotonic() + DIRTY_DELAY_S
+        elif kind == "spectrum":
+            if self._spectrum:
+                self.spectrum_changed.emit(parse_spectrum(message.get("bands"), self._count))
         elif kind == "error":
             text = str(message.get("message") or "erreur du moteur d'effets")
             log.error("Moteur REKA : %s", text)
