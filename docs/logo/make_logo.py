@@ -68,17 +68,8 @@ def letters():
     """R et K soudés : la panse du R s'appuie sur le fût du K, la jambe du R et le fût
     du K se rejoignent dans la pointe centrale."""
     r_stem = poly((258, 222), (372, 300), (392, 650), (352, 808), (292, 640), (282, 334))
-    r_bowl = QPainterPath(QPointF(300, 300))          # panse du R en vraies courbes
-    r_bowl.lineTo(452, 300)
-    r_bowl.cubicTo(QPointF(500, 300), QPointF(526, 336), QPointF(526, 405))
-    r_bowl.cubicTo(QPointF(526, 474), QPointF(500, 510), QPointF(452, 510))
-    r_bowl.lineTo(392, 510)
-    r_bowl.lineTo(392, 456)
-    r_bowl.lineTo(432, 456)
-    r_bowl.cubicTo(QPointF(452, 456), QPointF(462, 432), QPointF(462, 405))
-    r_bowl.cubicTo(QPointF(462, 378), QPointF(452, 354), QPointF(432, 354))
-    r_bowl.lineTo(372, 354)
-    r_bowl.closeSubpath()
+    r_bowl = poly((300, 300), (478, 300), (524, 346), (524, 468), (482, 510), (392, 510),
+                  (392, 452), (444, 452), (460, 436), (460, 372), (444, 356), (372, 356))
     r_leg = poly((410, 510), (484, 510), (512, 640), (502, 915), (476, 700))
     k_stem = poly((512, 300), (586, 300), (584, 640), (502, 915), (516, 640))
     k_arm = poly((586, 448), (674, 306), (748, 222), (716, 330), (610, 528), (586, 528))
@@ -128,22 +119,10 @@ def cut_lines(width: float) -> QPainterPath:
     return cuts
 
 
-def rounded(path: QPainterPath, radius: float) -> QPainterPath:
-    """Arrondit tous les angles saillants : la forme est rétrécie puis regonflée de
-    `radius` avec des joints ronds (ouverture morphologique)."""
-    stroker = QPainterPathStroker()
-    stroker.setWidth(2 * radius)
-    stroker.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
-    stroker.setCapStyle(Qt.PenCapStyle.RoundCap)
-    inner = path.subtracted(stroker.createStroke(path)).simplified()
-    return inner.united(stroker.createStroke(inner)).simplified()
-
-
-def emblem(gap=10, radius=9):
+def emblem(gap=8):
     r, k = letters()
-    body = rounded(union(r, k, crown()), radius)
-    wg = rounded(wings(), radius)
-    wg = wg.subtracted(stroke_of(body, gap)).subtracted(body)
+    body = union(r, k, crown())
+    wg = wings().subtracted(stroke_of(body, gap)).subtracted(body)
     return union(body, wg).subtracted(cut_lines(gap))
 
 
