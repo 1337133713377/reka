@@ -26,7 +26,7 @@ from shiboken6 import delete as delete_now
 
 from core.reaper_ctrl import TrackInfo
 from core.voicemeeter_ctrl import StripParams
-from ui import interfaces, styles
+from ui import decor, interfaces, styles
 from ui.fader import Fader, format_db
 from ui.fx_pill import PILL_HEIGHT, FxPill, decode_fx
 from ui.intellipan import PAD_HEIGHT, IntelliPad
@@ -45,6 +45,11 @@ NAME_HEIGHT = 24
 SLOT_PITCH = PILL_HEIGHT + 2
 MIN_SLOTS = 8
 ROUTING_KNOB = 28
+# Style tactile : cibles plus grandes
+BIG_MUTE_HEIGHT = 38
+BIG_ROUTING_KNOB = 34
+BIG_ROUTING_SECTION_HEIGHT = 118
+BIG_APPS_WIDTH = 60
 WIDGET_MAX = 16777215                 # QWIDGETSIZE_MAX
 # Disposition horizontale (une ligne par canal)
 ROW_HEADER_WIDTH = 100                # nom, Muet, Apps
@@ -103,7 +108,7 @@ class FxBadge(QAbstractButton):
 
     def paintEvent(self, _event) -> None:  # noqa: N802
         p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        styles.smooth(p)
         rect = QRectF(2, 2, self.width() - 4, self.height() - 4)
         on = self.isChecked() and self.isEnabled()   # sans piste REAPER : éteint
         custom = styles.element_color("fx_badge", self.color_scope)
@@ -167,7 +172,7 @@ class AppsButton(QAbstractButton):
 
     def paintEvent(self, _event) -> None:  # noqa: N802
         p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        styles.smooth(p)
         rect = QRectF(0.5, 0.5, self.width() - 1, self.height() - 1)
         hover = self.underMouse() or self.isDown()
         p.setPen(QPen(QColor(styles.accent_dim("apps", self.color_scope) if hover
@@ -367,7 +372,7 @@ class FxList(QWidget):
 
     def paintEvent(self, _event) -> None:  # noqa: N802
         p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        styles.smooth(p)
         slots = max(MIN_SLOTS, (self.height() + 2) // SLOT_PITCH)
         dash = QPen(styles.color(styles.TEXT_MUTED, 0.18), 1, Qt.PenStyle.DotLine)
         for slot in range(len(self._pills), slots):
@@ -489,7 +494,7 @@ class StripWidget(QFrame):
         self._sends_adjustable = sends_adjustable   # False : Banana, knobs = interrupteurs
         self.setObjectName("column")
         self._track: TrackInfo | None = None
-        self._layout_key: tuple[str, str] | None = None
+        self._layout_key: tuple | None = None   # (orientation, densité, ornements, tactile)
 
         self.fx_section = self._build_fx_section()
         self.routing_section = self._build_routing_section(route_labels)
@@ -637,10 +642,12 @@ class StripWidget(QFrame):
                                         interfaces.DEFAULT_ORIENTATION)
         density = interfaces.choice(density, interfaces.DENSITIES, interfaces.DEFAULT_DENSITY)
         self.fx_title.setVisible(styles.INTERFACE.titles)
-        if (orientation, density) == self._layout_key:
+        key = (orientation, density, styles.INTERFACE.decor, styles.INTERFACE.big)
+        if key == self._layout_key:
             return
-        self._layout_key = (orientation, density)
+        self._layout_key = key
         factor = interfaces.density_factor(density)
+        self._apply_target_sizes(styles.INTERFACE.big)
         clear_layout(self)
         clear_layout(self.fader_section)
         clear_layout(self._row_header)
@@ -649,20 +656,37 @@ class StripWidget(QFrame):
         else:
             self._arrange_column(factor, STRIP_WIDTHS[density])
         self.updateGeometry()
+        self.update()
+
+    def _apply_target_sizes(self, big: bool) -> None:
+        """Taille des cibles : normale, ou agrandie pour le tactile."""
+        self._mute_height = BIG_MUTE_HEIGHT if big else MUTE_HEIGHT
+        self._routing_height = BIG_ROUTING_SECTION_HEIGHT if big else ROUTING_SECTION_HEIGHT
+        for knob in self.knobs:
+            knob.setDiameter(BIG_ROUTING_KNOB if big else ROUTING_KNOB)
+        if self.apps is not None:
+            self.apps.setFixedSize(BIG_APPS_WIDTH if big else APPS_BUTTON_WIDTH, self._mute_height)
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        super().paintEvent(event)            # fond et bordure (feuille de style)
+        if styles.INTERFACE.decor:
+            p = QPainter(self)
+            decor.draw_decor(p, QRectF(self.rect()), self.orientation() == interfaces.HORIZONTAL)
 
     def _arrange_column(self, factor: float, width: int) -> None:
         """Console : effets, routing, Intellipan, Muet, fader + VU, nom, de haut en bas."""
         unfix(self, width=width)
         self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Preferred)
         unfix(self.fx_section, height=round(FX_SECTION_HEIGHT + (factor - 1) * 40))
-        unfix(self.routing_section, height=ROUTING_SECTION_HEIGHT)
+        unfix(self.routing_section, height=self._routing_height)
         unfix(self.pad_section, height=PAD_SECTION_HEIGHT)
-        unfix(self.mute, height=MUTE_HEIGHT)
+        unfix(self.mute, height=self._mute_height)
         unfix(self.fader_section)
         unfix(self.name, height=NAME_HEIGHT)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(*(round(m * factor) for m in (6, 6, 6, 4)))
+        extra = decor.decor_margins(horizontal=False)
+        layout.setContentsMargins(*(round(m * factor) + e for m, e in zip((6, 6, 6, 4), extra)))
         layout.setSpacing(round(8 * factor))
         layout.addWidget(self.fx_section)
         layout.addWidget(self.routing_section)
@@ -701,18 +725,20 @@ class StripWidget(QFrame):
         """Rack : une ligne — nom et Muet, effets, routing, Intellipan, puis fader et
         VU couchés sur toute la largeur restante."""
         margin = round(6 * factor)
-        unfix(self, height=ROUTING_SECTION_HEIGHT + 2 * margin)
+        left, top, right, bottom = decor.decor_margins(horizontal=True)
+        unfix(self, height=self._routing_height + 2 * margin + top + bottom)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         unfix(self.fx_section, width=ROW_FX_WIDTH)
-        unfix(self.routing_section, width=ROW_ROUTING_WIDTH, height=ROUTING_SECTION_HEIGHT)
+        unfix(self.routing_section, width=ROW_ROUTING_WIDTH + (16 if self._mute_height > MUTE_HEIGHT else 0),
+              height=self._routing_height)
         unfix(self.pad_section, width=ROW_PAD_WIDTH, height=PAD_SECTION_HEIGHT)
-        unfix(self.mute, height=MUTE_HEIGHT)
+        unfix(self.mute, height=self._mute_height)
         unfix(self.fader_section)
         self.fader_section.setMinimumWidth(220)
         unfix(self.name, height=NAME_HEIGHT)
 
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(margin, margin, margin, margin)
+        layout.setContentsMargins(margin + left, margin + top, margin + right, margin + bottom)
         layout.setSpacing(round(8 * factor))
         header = QVBoxLayout(self._row_header)
         header.setContentsMargins(0, 0, 0, 0)

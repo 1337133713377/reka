@@ -46,7 +46,7 @@ log = logging.getLogger(__name__)
 IMAGE_FILTER = "Images (*.png *.jpg *.jpeg *.bmp *.webp *.gif)"
 BACKGROUND_STEM = "background"
 PRESET_COLUMNS = 3            # cartes de thèmes prédéfinis par ligne
-INTERFACE_COLUMNS = 2         # cartes de styles d'interface par ligne
+INTERFACE_COLUMNS = 3         # cartes de styles d'interface par ligne
 
 
 def project_label(path: str) -> str:
@@ -185,8 +185,8 @@ class InterfaceCard(QAbstractButton):
     """Style d'interface : aperçu réel d'une mini-console dans ce style, son nom et
     sa description. Cochée = style en cours."""
 
-    PREVIEW_HEIGHT = 190
-    HEIGHT = PREVIEW_HEIGHT + 74
+    PREVIEW_HEIGHT = 150
+    HEIGHT = PREVIEW_HEIGHT + 92
 
     def __init__(self, iface: interfaces.Interface, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -195,7 +195,7 @@ class InterfaceCard(QAbstractButton):
         self._scaled: QPixmap | None = None
         self.setCheckable(True)
         self.setFixedHeight(self.HEIGHT)
-        self.setMinimumWidth(240)
+        self.setMinimumWidth(200)
         self.setToolTip(f"{iface.name} — {iface.description}")
         self.setCursor(Qt.CursorShape.PointingHandCursor)
 
@@ -241,7 +241,7 @@ class InterfaceCard(QAbstractButton):
                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, name)
         p.setPen(QColor(styles.TEXT_SECONDARY))
         p.setFont(styles.font(10))
-        p.drawText(QRectF(12, area.bottom() + 28, self.width() - 24, 36),
+        p.drawText(QRectF(12, area.bottom() + 28, self.width() - 24, 54),
                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop | Qt.TextFlag.TextWordWrap,
                    self.interface.description)
 
@@ -838,7 +838,7 @@ class SettingsDialog(QDialog):
         density = interfaces.DENSITIES[current.density][0].lower()
         self.interface_label.setText(f"Style en cours : {current.name}. Disposition conseillée : "
                                      f"strips {orientation}s, densité {density}.")
-        own_palette = bool(current.palette)
+        own_palette = current.has_palette
         self.keep_colors.setEnabled(own_palette)
         if not own_palette:
             self.keep_colors_hint.setText("Le style REKA suit toujours le thème et tes couleurs.")

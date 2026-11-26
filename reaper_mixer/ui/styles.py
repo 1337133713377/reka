@@ -230,7 +230,24 @@ def uses_theme_colors(iface: Interface | None = None, keep: bool | None = None) 
     """La console suit le thème et les couleurs choisies (Apparence, Couleurs) :
     style sans palette propre, ou mode mixte."""
     iface = INTERFACE if iface is None else iface
-    return not iface.palette or (KEEP_COLORS if keep is None else keep)
+    return not iface.has_palette or (KEEP_COLORS if keep is None else keep)
+
+
+_interface_palettes: dict[str, dict[str, str]] = {}
+
+
+def interface_palette(iface: Interface) -> dict[str, str]:
+    """Couleurs propres d'un style d'interface : sa palette construite depuis ses
+    quatre couleurs de base, corrigée par ses couleurs données."""
+    if iface.key not in _interface_palettes:
+        values = build_palette(*iface.base) if iface.base else {}
+        _interface_palettes[iface.key] = {**values, **iface.palette}
+    return _interface_palettes[iface.key]
+
+
+def smooth(p: QPainter) -> None:
+    """Lissage du dessin : coupé pour un style pixelisé."""
+    p.setRenderHint(QPainter.RenderHint.Antialiasing, INTERFACE.antialias)
 
 
 # --- Formes selon le style d'interface ----------------------------------------
@@ -470,7 +487,8 @@ def look_palette(theme: str | None, iface: Interface | None = None,
     iface = INTERFACE if iface is None else iface
     theme, values = theme_palette(theme)
     if not uses_theme_colors(iface, keep_colors):
-        values = {**{k: v for k, v in values.items() if k not in _DERIVED}, **iface.palette}
+        values = {**{k: v for k, v in values.items() if k not in _DERIVED},
+                  **interface_palette(iface)}
     return theme, _derive(values)
 
 
@@ -848,8 +866,8 @@ def build_stylesheet(panel_opacity: float = 1.0) -> str:
     global _panel_opacity
     _panel_opacity = panel_opacity
     return (_stylesheet()
-            .replace("@COLUMN_BG@", _rgba(BG_COLUMN, panel_opacity))
-            .replace("@SECTION_BG@", _rgba(BG_SECTION, panel_opacity)))
+            .replace("@COLUMN_BG@", _rgba(BG_COLUMN, panel_opacity * INTERFACE.panel_alpha))
+            .replace("@SECTION_BG@", _rgba(BG_SECTION, panel_opacity * INTERFACE.panel_alpha)))
 
 
 def refresh(app: QApplication, panel_opacity: float = 1.0) -> None:
@@ -1338,11 +1356,15 @@ QProgressBar::chunk {{
 
 def _interface_stylesheet() -> str:
     """Ajouts du style d'interface en cours (après la QSS de base : ils l'emportent)."""
-    if INTERFACE.borders == "bevel":
-        return _bevel_stylesheet()
-    if INTERFACE.borders == "none":
-        return _flat_stylesheet()
-    return ""
+    parts = {"bevel": _bevel_stylesheet, "none": _flat_stylesheet,
+             "dashed": lambda: _line_stylesheet("dashed", 1),
+             "thick": lambda: _line_stylesheet("solid", 3)}
+    sheet = parts[INTERFACE.borders]() if INTERFACE.borders in parts else ""
+    if INTERFACE.lcd:
+        sheet += _lcd_stylesheet()
+    if INTERFACE.big:
+        sheet += _big_stylesheet()
+    return sheet
 
 
 def _bevel_edges(base: str, sunken: bool = False, width: int = 2) -> str:
@@ -1393,8 +1415,28 @@ QPushButton#soloButton:checked {{
 QPushButton#primary {{
     background: {_chrome(GREEN_DIM)};
     {_bevel_edges(GREEN_DIM)}
-    color: {LCD_TEXT};
+    color: {LCD_TEXT if INTERFACE.lcd else TEXT_PRIMARY};
 }}
+QLabel#sectionTitle, QLabel#knobLabel, QLabel#masterLabel {{
+    font-weight: 700;
+}}
+QLabel#masterTitle {{
+    font-size: 15px;
+    font-weight: 700;
+}}
+QTabBar::tab:selected {{
+    background: {_chrome(BUTTON_BG)};
+    {_bevel_edges(BUTTON_BG)}
+}}
+QGroupBox {{
+    {_bevel_edges(BG_COLUMN)}
+}}
+"""
+
+
+def _lcd_stylesheet() -> str:
+    """Afficheurs LCD : noms des canaux et valeurs en caractères d'écran."""
+    return f"""
 QLabel#stripName, QLabel#faderValue, QLabel#masterValue {{
     background: {LCD_BG};
     color: {LCD_TEXT};
@@ -1409,20 +1451,54 @@ QLabel#stripName {{
     font-size: 12px;
     font-weight: 700;
 }}
-QLabel#sectionTitle, QLabel#knobLabel, QLabel#masterLabel {{
-    font-weight: 700;
+"""
+
+
+def _line_stylesheet(style: str, width: int) -> str:
+    """Cadres tracés (pointillés du terminal, gros traits pixel ou brutalistes)."""
+    edge = f"{width}px {style} {BORDER_COLUMN}"
+    inner = f"{max(1, width - 1)}px {style} {BORDER_SECTION}"
+    return f"""
+QFrame#column {{
+    border: {edge};
 }}
-QLabel#masterTitle {{
-    font-size: 16px;
-    font-weight: 700;
+QFrame#section {{
+    border: {inner};
 }}
-QTabBar::tab:selected {{
-    background: {_chrome(BUTTON_BG)};
-    {_bevel_edges(BUTTON_BG)}
+QPushButton, QPushButton#muteButton, QPushButton#soloButton {{
+    border: {edge};
+}}
+QPushButton:hover, QPushButton#muteButton:hover, QPushButton#soloButton:hover {{
+    border: {width}px {style} {GREEN_NEON};
+}}
+QPushButton#muteButton:checked {{
+    border: {width}px {style} {BORDER_COLUMN};
 }}
 QGroupBox {{
-    {_bevel_edges(BG_COLUMN)}
+    border: {edge};
 }}
+QLabel#stripName {{
+    font-weight: 800;
+}}
+QLabel#masterTitle {{
+    font-size: 15px;
+    font-weight: 800;
+}}
+"""
+
+
+def _big_stylesheet() -> str:
+    """Tactile : textes des boutons plus grands."""
+    return """
+QPushButton#muteButton, QPushButton#soloButton {
+    font-size: 14px;
+}
+QLabel#stripName {
+    font-size: 14px;
+}
+QLabel#knobLabel {
+    font-size: 11px;
+}
 """
 
 

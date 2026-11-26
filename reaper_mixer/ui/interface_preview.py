@@ -10,11 +10,11 @@ aurait (palette du style, ou thème et couleurs de l'utilisateur en mode mixte).
 
 from __future__ import annotations
 
-from PySide6.QtCore import QPointF, QSize, Qt
-from PySide6.QtGui import QColor, QLinearGradient, QPainter, QPixmap, QRadialGradient
+from PySide6.QtCore import QSize, Qt
+from PySide6.QtGui import QColor, QPainter, QPixmap
 from PySide6.QtWidgets import QBoxLayout, QHBoxLayout, QWidget
 
-from ui import interfaces, styles
+from ui import decor, interfaces, styles
 
 PREVIEW_STRIPS = (("Micro", -14.0, True), ("Musique", -9.0, False), ("Discord", -22.0, False))
 PREVIEW_EFFECTS = (("Pro-Q 4", True), ("Compresseur", True), ("Limiteur", False))
@@ -28,18 +28,8 @@ class _Backdrop(QWidget):
 
     def paintEvent(self, _event) -> None:  # noqa: N802
         p = QPainter(self)
-        w, h = self.width(), self.height()
         p.fillRect(self.rect(), QColor(styles.BG_WINDOW))
-        if styles.INTERFACE.background == "brushed":
-            gradient = QLinearGradient(0, 0, 0, h)
-            gradient.setColorAt(0.0, QColor(styles.BG_GLOW))
-            gradient.setColorAt(1.0, QColor(styles.BG_WINDOW))
-            p.fillRect(self.rect(), gradient)
-        elif styles.INTERFACE.background == "glow":
-            gradient = QRadialGradient(QPointF(w * 0.68, h * 0.42), max(w, h) * 0.62)
-            gradient.setColorAt(0.0, styles.color(styles.BG_GLOW, 0.95))
-            gradient.setColorAt(1.0, styles.color(styles.BG_GLOW, 0.0))
-            p.fillRect(self.rect(), gradient)
+        decor.paint_background(p, self.width(), self.height())
 
 
 def _build(orientation: str, density: str) -> QWidget:

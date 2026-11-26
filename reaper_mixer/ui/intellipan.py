@@ -194,7 +194,7 @@ class IntelliPad(QWidget):
     # --------------------------------------------------------------- dessin
     def paintEvent(self, _event) -> None:  # noqa: N802
         p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        styles.smooth(p)
         whole = QRectF(0.5, 0.5, self.width() - 1, self.height() - 1)
 
         # Fond : sombre, légèrement teinté par le thème

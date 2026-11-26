@@ -9,6 +9,13 @@ effets, REAPER, FL Studio ou Equalizer APO. REKA se met ensuite à jour toute se
   **Lecteur 2000** (métal en relief, afficheurs LCD verts, boutons chromés, égaliseur animé dans
   le Master), **Minimal** (aplats sans bordure, faders en simple barre) ou **REKA** d'origine.
   Un aperçu réel de chaque style avant de l'appliquer.
+- **Onze styles de plus** (15 en tout) : **Console analogique** (métal vissé, capuchons de
+  couleur, VU-mètre à aiguille), **Rack 19"** (modules vissés, anneaux de LED, afficheurs
+  rouges, un canal par unité), **Windows 11** (Mica, curseurs Fluent), **Tactile** (gros
+  boutons et knobs pour écran tactile), **Terminal** (vert monospace, pointillés, balayage),
+  **Plan d'architecte** (tout au trait blanc sur calque quadrillé), **Pixel 8-bit** (gros
+  pixels sans lissage), **Verre** (panneaux translucides sur aurore), **Hi-fi 70s** (façade
+  argentée, coffret en noyer, VU à aiguille), **Brutaliste** et **HUD sci-fi**.
 - **Disposition** : densité compacte, normale ou aérée ; strips verticales ou **horizontales**
   (une ligne par canal, fader et VU couchés) ; animations activées, réduites ou désactivées.
 - **Mode mixte** : garde la forme d'un style avec ton thème et tes couleurs par-dessus.

@@ -80,9 +80,9 @@ Discord, Spotify, ton jeu, ton navigateur : chacun son volume et son mute, **dep
 </td>
 <td valign="top">
 
-### 🎨 43 thèmes, 4 styles
+### 🎨 43 thèmes, 15 styles
 
-Dracula, Cyberpunk, Nord, thèmes clairs… quatre styles d'interface, ou **ta couleur pour chaque élément** et ton image de fond.
+Dracula, Cyberpunk, Nord, thèmes clairs… quinze styles d'interface (console analogique, rack, terminal, pixel…), ou **ta couleur pour chaque élément** et ton image de fond.
 
 </td>
 </tr>
@@ -262,7 +262,7 @@ processeur. Pour le vrai 7.1 des jeux : *Paramètres son de Windows* → **Voice
 
 <a id="interface"></a>
 
-## 🖥️ Quatre styles d'interface
+## 🖥️ Quinze styles d'interface
 
 ⚙ → **Interface** : ce n'est plus seulement la couleur qui change, mais la forme de toute la console. Panneaux, knobs, faders, VU-mètres, police et fond. Chaque style a un aperçu réel avant de l'appliquer.
 
@@ -275,7 +275,13 @@ processeur. Pour le vrai 7.1 des jeux : *Paramètres son de Windows* → **Voice
 </table>
 
 <p align="center">
-  <sub>Et toujours le style <b>REKA</b> d'origine.</sub>
+  <img src="docs/interfaces-galerie.png" alt="Les quatorze autres styles d'interface" width="100%">
+</p>
+
+<p align="center">
+  <sub><b>Console analogique</b> (capuchons de couleur, VU à aiguille) · <b>Rack 19"</b> (modules vissés, afficheurs rouges) ·
+  <b>Windows 11</b> · <b>Tactile</b> (grosses cibles) · <b>Terminal</b> · <b>Plan d'architecte</b> · <b>Pixel 8-bit</b> ·
+  <b>Verre</b> · <b>Hi-fi 70s</b> (noyer, VU à aiguille) · <b>Brutaliste</b> · <b>HUD sci-fi</b>. Et toujours le style <b>REKA</b> d'origine.</sub>
 </p>
 
 <details>
@@ -283,7 +289,7 @@ processeur. Pour le vrai 7.1 des jeux : *Paramètres son de Windows* → **Voice
 
 <br>
 
-<img src="docs/reglages-interface.png" alt="Réglages, onglet Interface : les quatre styles avec leur aperçu" width="420" align="right">
+<img src="docs/reglages-interface.png" alt="Réglages, onglet Interface : les styles avec leur aperçu" width="420" align="right">
 
 - **Densité** : compacte, normale ou aérée.
 - **Strips** : verticales (console) ou horizontales (rack, une ligne par canal, fader et VU couchés).

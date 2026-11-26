@@ -86,6 +86,16 @@ class Knob(QWidget):
     def value(self) -> float:
         return self._value
 
+    def diameter(self) -> int:
+        return self._diameter
+
+    def setDiameter(self, diameter: int) -> None:  # noqa: N802
+        """Change la taille du knob (style tactile : knobs plus grands)."""
+        if diameter != self._diameter:
+            self._diameter = diameter
+            self.setFixedSize(diameter + 8, diameter + 8)
+            self.update()
+
     def setValue(self, db: float) -> None:  # noqa: N802
         """Valeur venant de Voicemeeter ; ignorée pendant un glisser ou juste
         après un cran de molette."""
@@ -109,7 +119,7 @@ class Knob(QWidget):
     # -------------------------------------------------------------- dessin
     def paintEvent(self, _event) -> None:  # noqa: N802
         p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        styles.smooth(p)
         d = float(self._diameter)
         ring = max(2.6, d * 0.12)
         center = QPointF(self.width() / 2, self.height() / 2)
@@ -125,6 +135,8 @@ class Knob(QWidget):
             self._paint_chrome(p, center, d, ring, pos, accent, dim)
         elif shape == "arc":
             self._paint_arc(p, center, arc_rect, ring, pos, accent, dim)
+        elif shape in self._PAINTERS:
+            getattr(self, self._PAINTERS[shape])(p, center, d, pos, accent, dim)
         else:
             self._paint_reka(p, center, arc_rect, d, ring, pos, accent, dim)
 
@@ -225,6 +237,181 @@ class Knob(QWidget):
         p.setPen(QPen(QColor("#1d2228" if self._active else "#5a626d"), max(1.8, d * 0.06),
                       Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
         p.drawLine(center + direction * (cap_r * 0.3), center + direction * (cap_r * 0.85))
+
+    # Dessins des autres styles d'interface : (p, centre, diamètre, position, accent, sombre)
+    _PAINTERS = {"cap": "_paint_cap", "hardware": "_paint_hardware", "outline": "_paint_outline",
+                 "pixel": "_paint_pixel", "dots": "_paint_dots", "fluent": "_paint_fluent",
+                 "ring": "_paint_ring"}
+    # Capuchons de couleur de la console analogique, par knob
+    CAP_COLORS = {"send0": "#c8372d", "send1": "#2f6fb5", "send2": "#3f9a4a", "send3": "#d9a82a",
+                  "headphone": "#8a8f98"}
+
+    def _ticks(self, p, center, radius, length, pos, lit, unlit, width, count=11) -> None:
+        """Couronne de graduations, allumées jusqu'à la valeur."""
+        for n in range(count):
+            t = n / (count - 1)
+            direction = self._direction(t)
+            on = self._active and pos > 0.002 and t <= pos + 0.001
+            p.setPen(QPen(lit if on else unlit, width, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+            p.drawLine(center + direction * (radius - length), center + direction * radius)
+
+    def _paint_cap(self, p, center, d, pos, accent, dim) -> None:
+        """« Console analogique » : jupe sombre graduée, capuchon de couleur, trait blanc."""
+        r = d / 2 + 2
+        self._ticks(p, center, r, 2.5, 1.0, styles.color(styles.TEXT_SECONDARY, 0.55),
+                    styles.color(styles.TEXT_SECONDARY, 0.55), 1)
+        skirt = r - 3.5
+        gradient = QRadialGradient(center.x() - skirt * 0.3, center.y() - skirt * 0.4, skirt * 1.8)
+        gradient.setColorAt(0, QColor("#4a4e55"))
+        gradient.setColorAt(1, QColor("#16181b"))
+        p.setBrush(gradient)
+        p.setPen(QPen(styles.color(styles.BG_BLACK, 0.7), 1))
+        p.drawEllipse(center, skirt, skirt)
+        cap_color = (accent if styles.uses_theme_colors()
+                     else self.CAP_COLORS.get(self.color_element, "#8a8f98"))
+        if not self._active:
+            cap_color = styles.mix(cap_color, "#5a5e66", 0.7)
+        cap = skirt * 0.58
+        gradient = QRadialGradient(center.x() - cap * 0.35, center.y() - cap * 0.45, cap * 1.6)
+        gradient.setColorAt(0, QColor(cap_color).lighter(150))
+        gradient.setColorAt(1, QColor(cap_color).darker(130))
+        p.setBrush(gradient)
+        p.setPen(QPen(styles.color(styles.BG_BLACK, 0.5), 0.8))
+        p.drawEllipse(center, cap, cap)
+        direction = self._direction(pos)
+        p.setPen(QPen(QColor(styles.WHITE if self._active else "#9aa0a8"), max(1.6, d * 0.06),
+                      Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+        p.drawLine(center + direction * (cap * 0.2), center + direction * (skirt - 1))
+
+    def _paint_hardware(self, p, center, d, pos, accent, dim) -> None:
+        """« Rack » : bouton noir moleté, anneau de LED à la couleur de l'accent."""
+        r = d / 2 + 2.5
+        for n in range(11):
+            t = n / 10
+            on = self._active and pos > 0.002 and t <= pos + 0.001
+            dot = center + self._direction(t) * (r - 1.5)
+            if on and styles.INTERFACE.glow:
+                p.setPen(Qt.PenStyle.NoPen)
+                p.setBrush(styles.color(accent, 0.3))
+                p.drawEllipse(dot, 2.6, 2.6)
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QColor(accent) if on else styles.color(dim, 0.6))
+            p.drawEllipse(dot, 1.3, 1.3)
+        body = r - 5
+        p.setBrush(QColor(styles.KNOB_CAP_BOTTOM))
+        p.setPen(QPen(styles.color(styles.WHITE, 0.12), 1))
+        p.drawEllipse(center, body, body)
+        p.setPen(QPen(styles.color(styles.WHITE, 0.1), 1))        # moletage
+        for n in range(24):
+            a = math.radians(n * 15)
+            v = QPointF(math.cos(a), math.sin(a))
+            p.drawLine(center + v * (body - 2.2), center + v * (body - 0.5))
+        gradient = QRadialGradient(center.x() - body * 0.3, center.y() - body * 0.4, body * 1.5)
+        gradient.setColorAt(0, QColor(styles.KNOB_CAP_TOP))
+        gradient.setColorAt(1, QColor(styles.KNOB_CAP_BOTTOM))
+        p.setBrush(gradient)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.drawEllipse(center, body - 2.6, body - 2.6)
+        direction = self._direction(pos)
+        p.setPen(QPen(QColor(styles.WHITE if self._active else styles.TEXT_MUTED), max(1.6, d * 0.06),
+                      Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+        p.drawLine(center + direction * (body * 0.25), center + direction * (body - 2.6))
+
+    def _paint_outline(self, p, center, d, pos, accent, dim) -> None:
+        """« Plan d'architecte » / « HUD » : tout au trait, croix de centrage."""
+        r = d / 2
+        ink = QColor(accent) if self._active else styles.color(styles.TEXT_MUTED, 0.9)
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.setPen(QPen(styles.color(styles.TEXT_MUTED, 0.7), 1, Qt.PenStyle.DashLine))
+        arc_rect = QRectF(center.x() - r, center.y() - r, 2 * r, 2 * r)
+        p.drawArc(arc_rect, int(START_ANGLE * 16), int(-SPAN * 16))
+        if self._active and pos > 0.002:
+            p.setPen(QPen(ink, 2.2, Qt.PenStyle.SolidLine, Qt.PenCapStyle.FlatCap))
+            p.drawArc(arc_rect, int(START_ANGLE * 16), int(-SPAN * pos * 16))
+        inner = r - 4.5
+        p.setPen(QPen(ink, 1.2))
+        p.drawEllipse(center, inner, inner)
+        p.setPen(QPen(styles.color(styles.TEXT_MUTED, 0.6), 0.8))
+        p.drawLine(center - QPointF(3, 0), center + QPointF(3, 0))
+        p.drawLine(center - QPointF(0, 3), center + QPointF(0, 3))
+        direction = self._direction(pos)
+        p.setPen(QPen(ink, 1.4))
+        p.drawLine(center + direction * (inner * 0.45), center + direction * inner)
+
+    def _paint_pixel(self, p, center, d, pos, accent, dim) -> None:
+        """« Pixel 8-bit » : couronne de gros pixels, bouton carré."""
+        px = max(2, round(d / 10))
+        r = d / 2
+        for n in range(13):
+            t = n / 12
+            on = self._active and pos > 0.002 and t <= pos + 0.001
+            spot = center + self._direction(t) * (r - px / 2)
+            p.fillRect(QRectF(round(spot.x() - px / 2), round(spot.y() - px / 2), px, px),
+                       QColor(accent) if on else QColor(styles.mix(dim, styles.BG_COLUMN, 0.3)))
+        body = round(r * 0.55)
+        box = QRectF(round(center.x() - body), round(center.y() - body), 2 * body, 2 * body)
+        p.fillRect(box, QColor(styles.BORDER_COLUMN))
+        p.fillRect(box.adjusted(px, px, -px, -px), QColor(styles.BUTTON_BG))
+        p.fillRect(QRectF(box.left() + px, box.top() + px, box.width() - 2 * px, px),
+                   QColor(styles.BUTTON_HOVER))
+        tip = center + self._direction(pos) * (body - px)
+        p.fillRect(QRectF(round(tip.x() - px / 2), round(tip.y() - px / 2), px, px),
+                   QColor(styles.WHITE if self._active else styles.TEXT_MUTED))
+
+    def _paint_dots(self, p, center, d, pos, accent, dim) -> None:
+        """« Terminal » : couronne de carrés allumés jusqu'à la valeur, comme du texte."""
+        r = d / 2
+        size = max(2.0, d * 0.09)
+        for n in range(11):
+            t = n / 10
+            on = self._active and pos > 0.002 and t <= pos + 0.001
+            spot = center + self._direction(t) * (r - size)
+            p.fillRect(QRectF(spot.x() - size / 2, spot.y() - size / 2, size, size),
+                       QColor(accent) if on else styles.color(accent, 0.18))
+        tip = center + self._direction(pos) * (r * 0.38)
+        p.fillRect(QRectF(tip.x() - size / 2, tip.y() - size / 2, size, size),
+                   QColor(accent) if self._active else styles.color(accent, 0.3))
+
+    def _paint_fluent(self, p, center, d, pos, accent, dim) -> None:
+        """« Windows 11 » : piste fine, arc d'accent, pouce rond façon curseur Fluent."""
+        r = d / 2 - 2
+        arc_rect = QRectF(center.x() - r, center.y() - r, 2 * r, 2 * r)
+        p.setPen(QPen(QColor(styles.BUTTON_HOVER), 3, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+        p.drawArc(arc_rect, int(START_ANGLE * 16), int(-SPAN * 16))
+        if self._active and pos > 0.002:
+            p.setPen(QPen(QColor(accent), 3, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+            p.drawArc(arc_rect, int(START_ANGLE * 16), int(-SPAN * pos * 16))
+        thumb = center + self._direction(pos) * r
+        size = max(4.0, d * 0.16)
+        p.setPen(QPen(styles.color(styles.BG_BLACK, 0.35), 1))
+        p.setBrush(QColor(styles.mix(styles.BUTTON_HOVER, styles.WHITE, 0.15)))
+        p.drawEllipse(thumb, size, size)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor(accent) if self._active else QColor(styles.TEXT_MUTED))
+        p.drawEllipse(thumb, size * 0.55, size * 0.55)
+
+    def _paint_ring(self, p, center, d, pos, accent, dim) -> None:
+        """« HUD » : anneau segmenté lumineux, cercle intérieur, point de valeur."""
+        r = d / 2 - 1
+        arc_rect = QRectF(center.x() - r, center.y() - r, 2 * r, 2 * r)
+        segments = 18
+        step = SPAN / segments
+        for n in range(segments):
+            t = (n + 1) / segments
+            on = self._active and pos > 0.002 and t <= pos + 0.03
+            start = START_ANGLE - n * step - step * 0.15
+            if on and styles.INTERFACE.glow:
+                p.setPen(QPen(styles.color(accent, 0.25), 5, Qt.PenStyle.SolidLine, Qt.PenCapStyle.FlatCap))
+                p.drawArc(arc_rect, int(start * 16), int(-step * 0.7 * 16))
+            p.setPen(QPen(QColor(accent) if on else styles.color(dim, 0.7), 2.4,
+                          Qt.PenStyle.SolidLine, Qt.PenCapStyle.FlatCap))
+            p.drawArc(arc_rect, int(start * 16), int(-step * 0.7 * 16))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.setPen(QPen(styles.color(accent, 0.45 if self._active else 0.2), 1))
+        p.drawEllipse(center, r * 0.62, r * 0.62)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor(accent) if self._active else styles.color(dim, 0.8))
+        p.drawEllipse(center + self._direction(pos) * (r * 0.62), 2.2, 2.2)
 
     def _paint_arc(self, p, center, arc_rect, ring, pos, accent, dim) -> None:
         """« Minimal » : un arc fin et un point, sans bouton."""

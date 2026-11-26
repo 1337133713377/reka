@@ -47,7 +47,8 @@ def press(widget, x, y, kind=QEvent.Type.MouseButtonPress, button=LEFT, buttons=
 def test_interface_definitions():
     from ui import interfaces
 
-    assert list(interfaces.INTERFACES) == ["reka", "cantabile", "retro", "minimal"]
+    assert list(interfaces.INTERFACES)[:4] == ["reka", "cantabile", "retro", "minimal"]
+    assert len(interfaces.INTERFACES) >= 15
     assert interfaces.interface("inconnu").key == interfaces.DEFAULT_INTERFACE
     assert interfaces.choice("aeree", interfaces.DENSITIES, "normale") == "aeree"
     assert interfaces.choice(42, interfaces.DENSITIES, "normale") == "normale"
@@ -57,9 +58,9 @@ def test_interface_definitions():
     assert not interfaces.apply_interface(ui_cfg, "winamp") and ui_cfg["interface"] == "cantabile"
     for iface in interfaces.INTERFACES.values():
         assert iface.orientation in interfaces.ORIENTATIONS and iface.density in interfaces.DENSITIES
-        if iface.palette:                 # une palette de style couvre toutes les couleurs du thème
+        if iface.has_palette:             # une palette de style couvre toutes les couleurs du thème
             from ui import styles
-            assert set(styles._THEMED) <= set(iface.palette)
+            assert set(styles._THEMED) <= set(styles.interface_palette(iface)), iface.key
 
 
 def test_palette_follows_interface_unless_colors_are_kept(qapp, restore_look):
@@ -131,7 +132,7 @@ def test_choosing_an_interface_restyles_the_console(qapp, settings):
 
     window, dialog = settings
     vertical_width = window.width()
-    assert [card.isChecked() for card in dialog.interface_cards.values()] == [True, False, False, False]
+    assert [key for key, card in dialog.interface_cards.items() if card.isChecked()] == ["reka"]
     assert not dialog.keep_colors.isEnabled()                  # REKA suit toujours le thème
 
     dialog.set_interface("cantabile")
@@ -267,3 +268,59 @@ def test_interface_survives_restart(qapp, cfg, restore_look):
         assert window.width() >= window.minimumWidth()
     finally:
         window.close()
+
+
+def test_every_interface_draws_the_console(qapp, settings):
+    from ui import decor, interfaces, strip_widget, styles
+    from ui.master_widget import BIG_HEADPHONE_KNOB, HEADPHONE_KNOB
+
+    window, dialog = settings
+    strip, master = window.strips[0], window.master
+    for key, iface in interfaces.INTERFACES.items():
+        dialog.set_interface(key)
+        pump(qapp, 0.02)
+        assert styles.INTERFACE.key == key
+        window.grab()                                   # chaque dessin passe sans erreur
+        assert master.needle.isVisible() == iface.needle, key
+        big = strip.knobs[0].diameter() == strip_widget.BIG_ROUTING_KNOB
+        assert big == iface.big and (master.knob.diameter() == BIG_HEADPHONE_KNOB) == iface.big
+        assert (strip.mute.height() == strip_widget.BIG_MUTE_HEIGHT) == iface.big, key
+        margins = strip.layout().contentsMargins()
+        if iface.decor == "screws" and strip.orientation() == "vertical":
+            assert margins.top() >= decor.SCREW_MARGIN, key   # les vis logent dans la marge
+        if iface.has_palette:
+            assert styles.GREEN_NEON == styles.interface_palette(iface)["GREEN_NEON"], key
+    dialog.set_interface("reka")
+    assert master.knob.diameter() == HEADPHONE_KNOB and not master.needle.isVisible()
+
+
+def test_needle_meter_follows_the_level(qapp, restore_look):
+    from ui.master_widget import NeedleMeter
+
+    meter = NeedleMeter()
+    meter.resize(120, meter.height())
+    assert meter.values() == [-20.0, -20.0]
+    for _ in range(30):
+        meter.set_levels((-18.0, -60.0))                # 0 VU à gauche, silence à droite
+    left, right = meter.values()
+    assert left == pytest.approx(0.0, abs=0.1) and right == -20.0
+    assert NeedleMeter._ratio(-20) == pytest.approx(0.0) and NeedleMeter._ratio(3) == pytest.approx(1.0)
+    meter.grab()
+
+
+def test_glass_panels_and_pixel_drawing(qapp, restore_look):
+    from PySide6.QtGui import QPainter, QPixmap
+
+    from ui import styles
+
+    styles.configure({"interface": "glass"})
+    styles.set_theme("studio")
+    assert "rgba(" in styles.build_stylesheet(1.0)          # panneaux translucides
+    pixmap = QPixmap(10, 10)
+    p = QPainter(pixmap)
+    styles.smooth(p)
+    assert p.testRenderHint(QPainter.RenderHint.Antialiasing)
+    styles.configure({"interface": "pixel"})
+    styles.smooth(p)
+    assert not p.testRenderHint(QPainter.RenderHint.Antialiasing)   # gros pixels nets
+    p.end()
